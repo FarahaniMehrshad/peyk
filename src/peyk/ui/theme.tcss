@@ -1,0 +1,210 @@
+Screen {
+    background: $background;
+}
+
+SetupScreen, LoginScreen {
+    align: center middle;
+}
+
+.card {
+    width: 72;
+    max-width: 100%;
+    height: auto;
+    max-height: 100%;
+    padding: 1 2;
+    border: round $edge;
+    background: $background;
+}
+
+.title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.help {
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+.label {
+    color: $text;
+}
+
+.error {
+    color: $error;
+}
+
+.hints {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+Input {
+    border: none;
+    height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+    background: $surface;
+}
+
+Input:focus {
+    border: none;
+    background: $primary 25%;
+}
+
+ChoiceScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+/* Colours of the terminal cannot be mixed with others. */
+ChoiceScreen:ansi, Finder:ansi, HelpScreen:ansi, FilePicker:ansi, CommandScreen:ansi {
+    background: transparent;
+}
+
+.dialog {
+    height: auto;
+    padding: 1 2;
+    border: round $warning;
+    background: $background;
+}
+
+#panels {
+    height: 1fr;
+}
+
+.panel {
+    border: round $panel;
+}
+
+.panel.active {
+    border: round $edge;
+}
+
+#sidebar {
+    width: 36%;
+    min-width: 26;
+    max-width: 52;
+}
+
+#sidebar.wide {
+    width: 1fr;
+    max-width: 100%;
+}
+
+#conversation {
+    width: 1fr;
+}
+
+#compose {
+    border-top: solid $panel;
+    padding: 0 1;
+}
+
+#compose:focus {
+    border-top: solid $edge;
+}
+
+Finder, HelpScreen, FilePicker {
+    align: center middle;
+    background: $background 60%;
+}
+
+.finder {
+    height: 1fr;
+    padding: 0 1;
+    border: round $edge;
+    border-title-color: $primary;
+    background: $background;
+}
+
+.finder #query {
+    border-bottom: solid $panel;
+}
+
+.finder-hints {
+    color: $text-muted;
+    height: 1;
+}
+
+#help {
+    height: 1fr;
+}
+
+/* A blank column on both sides: Windows Terminal shifts a row whose box-drawing
+   character is directly followed by the zero-width one that Persian text uses. */
+.frame {
+    width: 92;
+    max-width: 96%;
+    height: 80%;
+    padding: 0 1;
+    background: $background;
+}
+
+.frame.small {
+    width: 62;
+    height: auto;
+}
+
+.quote {
+    color: $text-muted;
+    margin-top: 1;
+    max-height: 4;
+}
+
+CommandScreen {
+    align: left bottom;
+    background: $background 40%;
+}
+
+.command {
+    height: auto;
+    background: $bar;
+}
+
+#command-help {
+    padding: 0 1;
+    height: auto;
+    color: $text-muted;
+}
+
+.command-line {
+    height: auto;
+    padding: 0 1;
+}
+
+.command-mark {
+    width: 1;
+    color: $primary;
+}
+
+#command {
+    width: 1fr;
+}
+
+.answer {
+    margin-top: 1;
+    max-height: 2;
+}
+
+ViewerScreen {
+    background: $background;
+}
+
+.viewer {
+    padding: 0 1;
+}
+
+#viewer-text {
+    max-height: 3;
+}
+
+#viewer-hints {
+    height: 1;
+    color: $text-muted;
+}
+
+TabBar {
+    padding: 0 1;
+}
