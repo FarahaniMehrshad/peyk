@@ -6,6 +6,10 @@ Chats and folders, tabs, replies, edits, formatting, reactions, search, files an
 the terminal), stickers and GIFs, voice messages, forwarding, pinned messages, notifications, and
 Persian, Arabic and Hebrew text. One account; no secret chats or calls.
 
+![A group chat in Peyk, next to the chat list](docs/chats.png)
+
+*The made-up chats of `peyk --demo`, in Windows Terminal.*
+
 ## Install
 
 You need Windows 10 or 11 and [Windows Terminal](https://aka.ms/terminal) (1.22 or later shows
@@ -158,6 +162,8 @@ goes to the next pack. `g` shows your saved GIFs. Move with `h` `j` `k` `l` and 
 you were replying, the sticker is the reply. Animated stickers and GIFs show as a still picture.
 Packs and GIFs are added in an official app.
 
+![The sticker picker: packs on the left, a grid of stickers on the right](docs/stickers.png)
+
 ## Voice messages
 
 `o` on a voice message plays it inside Peyk, with `▶ 0:03 / 0:12` beside it; `o` again, or opening
@@ -183,6 +189,8 @@ starts, so restart it after changing the colour scheme. Other themes: `theme = "
 `config.toml`.
 
 ## Persian, Arabic and Hebrew
+
+![A chat in Persian, with a reply, a photo shown in the terminal and a link](docs/persian.png)
 
 Windows Terminal joins letters but does not order them, so Peyk does. Use a terminal font that has
 the letters: Cascadia Mono does; many Nerd Fonts do not, and then Windows borrows one that does not
