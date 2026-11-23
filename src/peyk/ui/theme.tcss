@@ -53,14 +53,14 @@ Input:focus {
     background: $primary 25%;
 }
 
-ChoiceScreen, ReactionPicker {
+ChoiceScreen, ReactionPicker, RecordScreen {
     align: center middle;
     background: $background 60%;
 }
 
 /* Colours of the terminal cannot be mixed with others. */
 ChoiceScreen:ansi, ReactionPicker:ansi, Finder:ansi, HelpScreen:ansi, FilePicker:ansi, CommandScreen:ansi,
-StickerPicker:ansi {
+StickerPicker:ansi, RecordScreen:ansi {
     background: transparent;
 }
 

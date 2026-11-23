@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 from textual import on
 from textual.message import Message as UiMessage
 
+from peyk import config
 from peyk.backend.base import BackendError, Link, ReactionsChanged
-from peyk.models import Chat, Kind, Media, State
+from peyk.models import Chat, Kind, Media, State, VoiceNote
 from peyk.platform import notify
 from peyk.store import is_channel_id
 from peyk.text import format as fmt
+from peyk.ui.alerts import Alerts
 from peyk.ui.screens.reactions import ReactionPicker
 from peyk.ui.screens.stickers import StickerPicker
 from peyk.ui.screens.writing import Draft
@@ -93,12 +95,15 @@ class Extras(_Base):
         )
         self.app.push_screen(picker, chosen)
 
-    def _send_file(self, chat_id: int, media: Media) -> None:
-        """A sticker or GIF goes at once, as a reply if one was being written."""
+    def _send_file(self, chat_id: int, media: Media | VoiceNote) -> None:
+        """A sticker, GIF or voice message goes at once, as a reply if one was being written."""
         draft = self._drafts.setdefault(chat_id, Draft())
         reply, draft.reply = draft.reply, None
         me = self._me.id if self._me else 0
-        self.outbox.add(chat_id, "", (), reply, me, "", ready=media)
+        if isinstance(media, VoiceNote):
+            self.outbox.add(chat_id, "", (), reply, me, "", attachment=media)
+        else:
+            self.outbox.add(chat_id, "", (), reply, me, "", ready=media)
         if chat_id == self.active:
             self._show_draft()
             self.do_newest()
@@ -193,6 +198,45 @@ class Extras(_Base):
         self._read_soon()
         if focused and self._alerts:
             self._window = notify.terminal_window() or self._window
+
+    # -- notifications on and off
+
+    def _start_alerts(self) -> bool:
+        if self._notifier is None:
+            return False
+        self._notifier.on_click = self._notice_clicked_somewhere
+        self._alerts = Alerts(
+            self._notifier, self.store, self.set_timer, self._in_view, self._show_content
+        )
+        return True
+
+    def do_notifications(self, wanted: str = "") -> None:
+        """`wanted`: on or off; nothing switches them."""
+        on = wanted == "on" if wanted else self._alerts is None
+        if on == (self._alerts is not None):
+            self._flash(f"Notifications are already {'on' if on else 'off'}.")
+            return
+        if on:
+            if not self._start_alerts():
+                self._flash("Notifications cannot be shown here.")
+                return
+            if self.is_mounted:
+                self._window = notify.terminal_window() or self._window
+        else:
+            self._alerts = None
+            if self._notifier:
+                self._notifier.on_click = None
+                self._notifier.clear(for_good=True)  # and Windows forgets Peyk's name
+        state = "on" if on else "off"
+        if self._config_path is None:
+            self._flash(f"Notifications {state} until Peyk ends.")
+            return
+        try:
+            config.save_setting(self._config_path, "notifications", "enabled", on)
+        except config.ConfigError as error:
+            self._flash(f"Notifications {state} until Peyk ends: config.toml {error}.")
+            return
+        self._flash(f"Notifications {state}, also next time.")
 
     def _notice_clicked_somewhere(self, chat_id: int) -> None:
         """From a thread of Windows."""

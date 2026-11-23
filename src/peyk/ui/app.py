@@ -8,6 +8,7 @@ from collections.abc import Callable
 from textual.app import App
 
 from peyk import secrets as secret_store
+from peyk.audio import Audio
 from peyk.backend import proxy as proxies
 from peyk.backend.base import Backend
 from peyk.backend.session import remove_session
@@ -41,6 +42,7 @@ class PeykApp(App[None]):
         graphics: Graphics | None = None,
         palette: Palette | None = None,
         notifier: Notifier | None = None,
+        audio: Audio | None = None,
     ) -> None:
         """With `backend`, run on it directly (demo): nothing is read or stored.
 
@@ -54,6 +56,7 @@ class PeykApp(App[None]):
         self._fixed = backend
         self._graphics = graphics
         self._notifier = notifier
+        self._audio = audio
         self._backend = backend
         self._secrets: Secrets | None = None
 
@@ -120,7 +123,10 @@ class PeykApp(App[None]):
     def on_login_screen_signed_in(self) -> None:
         assert self._backend
         self._replace(
-            MainScreen(self._backend, self._config, self._graphics, self._notifier)
+            MainScreen(
+                self._backend, self._config, self._graphics, self._notifier, self._audio,
+                self._paths.config if self._paths else None,
+            )
         )
 
     async def on_login_screen_edit_setup(self, event: LoginScreen.EditSetup) -> None:

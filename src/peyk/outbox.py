@@ -17,7 +17,7 @@ from itertools import count
 from typing import Any
 
 from peyk.backend.base import Backend, BackendError, ErrorKind
-from peyk.models import Attachment, Media, Message, Reply, Span, State
+from peyk.models import Attachment, Media, Message, Reply, Span, State, VoiceNote
 from peyk.text import format as fmt
 
 FIRST_ID = 1 << 60  # sorts after every real message
@@ -45,7 +45,7 @@ class Outbox:
         self._tokens: dict[int, int] = {}
         self._typed: dict[int, str] = {}
         self._tries: dict[int, int] = {}
-        self._attachments: dict[int, Attachment] = {}
+        self._attachments: dict[int, Attachment | VoiceNote] = {}
         self._ready: dict[int, Media] = {}  # stickers and GIFs: on Telegram already
         self._uploaded: dict[int, Any] = {}
         self._uploads: dict[int, asyncio.Future[Any]] = {}
@@ -71,7 +71,7 @@ class Outbox:
         reply: Reply | None,
         sender_id: int,
         typed: str,
-        attachment: Attachment | None = None,
+        attachment: Attachment | VoiceNote | None = None,
         ready: Media | None = None,
     ) -> Message:
         """`typed` is the text with its formatting marks. `ready`: a sticker or GIF."""
@@ -113,8 +113,9 @@ class Outbox:
         return message
 
     def is_ready_file(self, message_id: int) -> bool:
-        """A sticker or GIF, which cannot be taken back into the box."""
-        return message_id in self._ready
+        """A sticker, GIF or voice message, which cannot be taken back into the box."""
+        voice = isinstance(self._attachments.get(message_id), VoiceNote)
+        return message_id in self._ready or voice
 
     def take_back(
         self, chat_id: int, message_id: int
@@ -122,6 +123,7 @@ class Outbox:
         """As it was typed, for editing."""
         typed = self._typed.get(message_id, "")
         attachment = self._attachments.get(message_id)
+        assert not isinstance(attachment, VoiceNote)
         message = self.discard(chat_id, message_id)
         return (typed, message.reply, attachment) if message else None
 
@@ -254,7 +256,9 @@ class Outbox:
         self._later(seconds, again)
 
 
-def _shown(attachment: Attachment) -> Media:
+def _shown(attachment: Attachment | VoiceNote) -> Media:
+    if isinstance(attachment, VoiceNote):
+        return Media("voice", f"Voice message {fmt.duration(attachment.duration)}")
     if attachment.as_photo:
         return Media("photo", f"Photo {attachment.name}")
     return Media("document", f"File {attachment.name} ({fmt.size(attachment.size)})")

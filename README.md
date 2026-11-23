@@ -32,8 +32,12 @@ API keys: <https://my.telegram.org>, under "API development tools".
 | `i` `r` `e` | write, reply to the selected message, edit it (or your last one) |
 | `d` `y` | delete (asks first), copy |
 | `+` | react to the selected message, or take it back |
+| `F` | forward the selected message |
+| `P` | go to the pinned message; again for older ones |
+| `c` | mute, archive, pin or mark the chat |
 | `o` `p` `a` | open the file or link, show the picture, send a file |
 | `s` `g` | send a sticker, a GIF |
+| `v` | record a voice message (`o` plays one) |
 | `/` `?` `@` | find chats, messages, people in this chat and what they wrote |
 | `:` `F1` | command bar, all keys |
 | `L` `q` | log out, quit |
@@ -51,9 +55,10 @@ logout = ""          # no key
 
 The actions: `down` `up` `page_down` `page_up` `newest` `focus_list` `focus_chat` `open` `next_tab`
 `previous_tab` `close_tab` `close_others` `fullscreen` `deselect` `write` `reply` `edit` `delete`
-`copy` `react` `open_media` `preview` `attach` `stickers` `gifs` `find_chat` `find_message`
-`find_sender` `command` `help` `quit` `logout`. If two have the same key, or one is not a key, Peyk says so and does not
-start. Arrows, PgUp, PgDn, End and `Ctrl+Q` always work; digits are for folders and tabs.
+`copy` `react` `forward` `pinned` `chat_menu` `open_media` `preview` `attach` `stickers` `gifs`
+`voice` `find_chat` `find_message` `find_sender` `command` `help` `quit` `logout`. If two have the
+same key, or one is not a key, Peyk says so and does not start. Arrows, PgUp, PgDn, End and `Ctrl+Q`
+always work; digits are for folders and tabs.
 
 A chat is marked read only while it is open, the terminal has focus, and the message is on screen.
 
@@ -77,26 +82,43 @@ highlighted under the message. Custom emoji are shown as the ordinary emoji they
 Who is typing shows in the list and above the compose box. Others see when you type, unless you set
 `typing = false` under `[privacy]` in `config.toml`.
 
+## Forwarding, pinning, managing chats
+
+`F` on a selected message asks where to (Saved Messages first, then your chats, or type a name),
+then whether to keep the sender's name. Trying again after a failure never forwards twice.
+
+A chat's newest pinned message shows above its messages; `P` or a click goes to it, and the bar then
+shows the next older one. `:pin` pins the selected message: in a private chat for both of you or
+only for you, in a group with or without telling the members. `:unpin` unpins the selected message,
+or the one in the bar.
+
+`c` acts on the chat selected in the list, or the open one: mute it (1 hour, 8 hours, 2 days or
+until you unmute it), archive it (the Archive tab shows it), pin it to the top, or mark it read or
+unread.
+
 ## Notifications
 
 New messages are announced by Windows, one notification per chat, except in muted chats and in the
-chat you are looking at. A click opens the chat. They disappear when you read the chat anywhere, when
-the message is deleted, and when Peyk ends. Under `[notifications]`, `show_content = false` hides what
-was written and `enabled = false` turns them off. Windows only shows them from senders it knows, so
-Peyk registers its name for your account (`HKCU\Software\Classes\AppUserModelId\Peyk.Telegram`);
-logging out removes that.
+chat you are looking at. A click opens the chat. They disappear when you read the chat anywhere,
+when the message is deleted, and when Peyk ends. Under `[notifications]`, `show_content = false`
+hides what was written and `enabled = false` turns them off. `:notifications off` and
+`:notifications on` turn them off and on at once, and save that in `config.toml`; only that line
+changes. Windows only shows them from senders it knows, so Peyk registers its name for your account
+(`HKCU\Software\Classes\AppUserModelId\Peyk.Telegram`); logging out or `:notifications off` removes
+that.
 
 ## Searching
 
 `?` searches this chat, or all chats from the list; `Tab` switches. `Enter` goes to the message, and
 `G` returns to the newest. Persian and Arabic spellings of the same letter match when finding chats.
 
-## Files and pictures
+## Files, stickers and GIFs
 
-`o` downloads a file and opens it (`o` again stops the download), or opens a link. Files go to
-`Downloads\Peyk` (`:downloads` shows it), are never replaced, and are marked as coming from the web.
-Only types that show something are opened; programs, scripts and the like are shown in their folder.
-A link whose text hides where it goes is shown first, and only `http` and `https` are opened.
+`o` downloads a file and opens it (`o` again stops the download), or opens a link; clicking a link
+opens it too. Files go to `Downloads\Peyk` (`:downloads` shows it), are never replaced, and are
+marked as coming from the web. Only types that show something are opened; programs, scripts and the
+like are shown in their folder. A link whose text hides where it goes is shown first, and only
+`http` and `https` are opened.
 
 `a` sends a file: type to filter, or paste a path. Pictures go as photos, without their metadata
 (place, camera); `Tab` sends them as files, untouched. What you write next is the caption. `d` on the
@@ -106,6 +128,18 @@ message stops the upload.
 goes to the next pack. `g` shows your saved GIFs. Move with `h` `j` `k` `l` and send with `Enter`; if
 you were replying, the sticker is the reply. Animated stickers and GIFs show as a still picture.
 Packs and GIFs are added in an official app.
+
+## Voice messages
+
+`o` on a voice message plays it inside Peyk, with `▶ 0:03 / 0:12` beside it; `o` again, or opening
+another chat, stops it. It is kept in memory, not saved.
+
+`v` records from your default microphone until `Enter` (or `v`) sends it or `Esc` throws it away.
+While it records, a window shows `●`, the time and how loud it hears you, and nothing else can be
+done. It stops by itself at 10 minutes. The sound is never written to disk. If only silence comes,
+Windows may be keeping the microphone from desktop apps: Settings > Privacy & security > Microphone.
+
+## Pictures
 
 Pictures show between the messages, sharp if the terminal supports Sixel (Windows Terminal 1.22),
 otherwise as coloured blocks. `p` fills the window with one; `h` `l` walk through the others.

@@ -124,8 +124,10 @@ class Finder[T](ModalScreen[T | None]):
 
 
 class ChatFinder(Finder[Chat]):
-    def __init__(self, backend: Backend, options: TextOptions, chats: list[Chat]) -> None:
-        super().__init__(backend, options, "Find a chat")
+    def __init__(
+        self, backend: Backend, options: TextOptions, chats: list[Chat], title: str = "Find a chat"
+    ) -> None:
+        super().__init__(backend, options, title)
         self._chats = chats
 
     def refresh_results(self) -> None:

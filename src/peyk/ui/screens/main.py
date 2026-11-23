@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import OrderedDict
 from pathlib import Path
 
+import numpy as np
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -13,6 +15,7 @@ from textual.message import Message as UiMessage
 from textual.timer import Timer
 from textual.worker import Worker
 
+from peyk.audio import Audio, SoundDevice
 from peyk.backend.base import (
     Backend,
     BackendError,
@@ -37,12 +40,15 @@ from peyk.ui.keymap import action_for, pressed
 from peyk.ui.screens.confirm import ConfirmScreen
 from peyk.ui.screens.extras import LOOK_EVERY, Extras
 from peyk.ui.screens.finding import Finding
+from peyk.ui.screens.managing import Managing
 from peyk.ui.screens.media import MediaActions
+from peyk.ui.screens.voice import VoiceMessages
 from peyk.ui.screens.writing import Draft, Writing
 from peyk.ui.widgets.chat_list import ChatList
 from peyk.ui.widgets.conversation import Conversation
 from peyk.ui.widgets.divider import Divider
 from peyk.ui.widgets.edit_box import EditBox
+from peyk.ui.widgets.pin_bar import PinBar
 from peyk.ui.widgets.status import StatusBar
 from peyk.ui.widgets.strips import TextOptions
 from peyk.ui.widgets.tabs import Tab, TabBar
@@ -66,7 +72,7 @@ _CHAT_HINTS = (
 _WRITE_HINTS = "Enter send  Ctrl+Enter new line  Esc done"
 
 
-class MainScreen(Writing, Finding, MediaActions, Extras):
+class MainScreen(Writing, Finding, MediaActions, Extras, Managing, VoiceMessages):
     AUTO_FOCUS = ""
     PAGE = PAGE
 
@@ -79,10 +85,15 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
         config: Config | None = None,
         graphics: Graphics | None = None,
         notifier: Notifier | None = None,
+        audio: Audio | None = None,
+        config_path: Path | None = None,
     ) -> None:
+        """`config_path`: where settings changed in Peyk are kept; None keeps them for this run."""
         super().__init__()
         config = config or Config()
         self._backend = backend
+        self._audio: Audio = audio or SoundDevice()  # touches no device until asked
+        self._decoded: OrderedDict[tuple[int, int], tuple[np.ndarray, int]] = OrderedDict()
         self._options = TextOptions(config.rtl, config.lam_alef)  # type: ignore[arg-type]
         self._formatting = config.formatting
         self._keys = config.keys
@@ -114,14 +125,16 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
         self._show_typing_to_others = config.show_typing
         self._told_typing: dict[int, float] = {}  # when, by chat
         self._file_memory: dict[str, str] = {}  # the sticker pack open last
+        self._forward_tokens: dict[tuple[int, int, int, bool], int] = {}
+        self._pin_index: dict[int, int] = {}  # the pinned message shown, from the newest
         self._typing_timer: Timer | None = None
         self._alerts: Alerts | None = None
         self._window = 0  # of the terminal
-        if notifier and config.notifications:
-            notifier.on_click = self._notice_clicked_somewhere
-            self._alerts = Alerts(
-                notifier, self.store, self.set_timer, self._in_view, config.show_content
-            )
+        self._notifier = notifier
+        self._show_content = config.show_content
+        self._config_path = config_path
+        if config.notifications:
+            self._start_alerts()
         self.folder = ALL
         self.open_chats: list[int] = []
         self.active: int | None = None
@@ -133,6 +146,7 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
         self._read_timer: Timer | None = None
         self._was_online = False
         self._loaded_once = False
+        self._load_trouble = False  # a notice says that loading failed
         self._unsubscribe: list[Unsubscribe] = []
 
     def compose(self) -> ComposeResult:
@@ -142,6 +156,7 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
                 yield ChatList(self._options, id="chats")
             with Vertical(id="conversation", classes="panel"):
                 yield TabBar(self._options, id="tabs", empty="No open chats")
+                yield PinBar(self._options)
                 yield Conversation(
                     self._options, id="messages", gallery=self.gallery if self._inline else None
                 )
@@ -178,6 +193,7 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
         self._load()
 
     def on_unmount(self) -> None:
+        self._stop_voice()
         while self._unsubscribe:
             self._unsubscribe.pop()()
 
@@ -203,9 +219,13 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
                 await self._load_folders()
                 await self._load_chats()
                 await self._refresh_open_chat()
+                if self._load_trouble:
+                    self._load_trouble = False
+                    self._say("")
                 return
             except BackendError as error:
                 wait = error.retry_after or 5 * (attempt + 1)
+                self._load_trouble = True
                 self._say(f"{error.message} Trying again in {wait}s.")
                 await asyncio.sleep(wait)
         self._say("Chats could not be loaded. They will load when the connection is back.")
@@ -223,8 +243,9 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
             seen.update(c.id for c in batch)
             self._redraw_chats()
         self.store.forget_chats_except(seen | set(self.open_chats))
+        if not self._loaded_once:
+            self._say("")  # what said they were loading; later reloads leave notices alone
         self._loaded_once = True
-        self._say("")
         self._redraw_chats()
 
     async def _refresh_open_chat(self) -> None:
@@ -317,6 +338,8 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
     def _show(self, change: Change) -> None:
         if change.typing:
             self._show_typing()
+        if change.pins or change.stale_pins:
+            self._pins_changed(change.pins, change.stale_pins)
         if change.chats:
             self._redraw_chats()
         if self.active is not None:
@@ -443,10 +466,13 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
         self.in_chat = True
         self._arrange()
         if chat_id != self.active:
+            self._stop_voice()
             self._leave_window()
             self.active = chat_id
             self._open_conversation(chat)
             self._show_draft()
+            self._show_pins()
+            self._load_pins(chat_id)
         self.chat_list.select(chat_id)
         self._redraw_chats()
         if not load:
@@ -483,7 +509,9 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
             self.open_chat(self.open_chats[min(index, len(self.open_chats) - 1)])
             return
         self._leave_window()
+        self._stop_voice()
         self.active = None
+        self._show_pins()
         self.in_chat = self.fullscreen = False
         self.set_focus(None)
         self._show_draft()

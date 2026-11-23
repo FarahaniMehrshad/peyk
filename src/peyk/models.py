@@ -65,6 +65,23 @@ class Attachment:
 
 
 @dataclass(frozen=True, slots=True)
+class VoiceNote:
+    """A recorded voice message to send, in Ogg/Opus. It is never written to disk."""
+
+    data: bytes
+    duration: int  # seconds
+    waveform: bytes  # levels from 0 to 31
+
+    @property
+    def name(self) -> str:
+        return "voice.ogg"
+
+    @property
+    def size(self) -> int:
+        return len(self.data)
+
+
+@dataclass(frozen=True, slots=True)
 class StickerPack:
     key: str  # "recent", "faved", or "set:" and its id
     title: str

@@ -41,6 +41,7 @@ from peyk.models import (
     Span,
     StickerPack,
     User,
+    VoiceNote,
 )
 from peyk.text import format as fmt
 from peyk.text import markup
@@ -90,6 +91,11 @@ class FakeBackend:
         self.menus: dict[int, ReactionMenu] = {}  # where they differ from the usual
         self.sticker_list: list[StickerPack] = list(sample.STICKER_PACKS)
         self.gifs: tuple[Media, ...] = sample.GIFS
+        self.pins: dict[int, list[int]] = {
+            chat_id: [m.id for m in self.messages[chat_id] if m.text and not m.service][:count]
+            for chat_id, count in ((sample.GROUP, 2), (sample.SARA, 1))
+        }
+        self.most_pinned_chats = 5
 
     def fail(self, method: str, *failures: Exception) -> None:
         """Make the next calls to `method` raise."""
@@ -264,7 +270,14 @@ class FakeBackend:
 
     # -- files
 
-    async def upload(self, attachment: Attachment, progress: Progress) -> Media:
+    async def upload(self, attachment: Attachment | VoiceNote, progress: Progress) -> Media:
+        if isinstance(attachment, VoiceNote):
+            await self._step("upload", f"voice:{attachment.duration}")
+            await self._pretend(attachment.size, progress)
+            file_id = next(self._file_ids)
+            self.sent_files[file_id] = attachment.data
+            label = f"Voice message {fmt.duration(attachment.duration)}"
+            return Media("voice", label, file_id, "", "audio/ogg", attachment.size)
         await self._step("upload", attachment.name + (":photo" if attachment.as_photo else ""))
         source = Source(attachment.path)
         try:
@@ -368,6 +381,73 @@ class FakeBackend:
 
     async def typing(self, chat_id: int) -> None:
         await self._step("typing", str(chat_id))
+
+    # -- forwarding and pinning
+
+    async def forward(
+        self, from_chat: int, message_id: int, to_chat: int, token: int, with_author: bool
+    ) -> Message | None:
+        how = "author" if with_author else "no author"
+        await self._step("forward", f"{from_chat}:{message_id}:{to_chat}:{how}")
+        if token in self.tokens:
+            return None
+        self.tokens.add(token)
+        original = self._find(from_chat, message_id)
+        if original is None:
+            raise BackendError(ErrorKind.REFUSED, "That message no longer exists.")
+        author = ""
+        if with_author:
+            source = self.chat_map.get(from_chat)
+            own = "You" if original.outgoing else original.sender
+            channel = source.title if source and source.kind is Kind.CHANNEL else ""
+            author = original.forwarded or channel or own
+        return self.receive(to_chat, original.text, sample.ME, "You", quiet=True,
+                            spans=original.spans, media=original.media,
+                            forwarded=author)  # fmt: skip
+
+    async def pinned(self, chat_id: int) -> list[Message]:
+        await self._step("pinned", str(chat_id))
+        ids = self.pins.get(chat_id, [])
+        return [m for m in reversed(self.messages.get(chat_id, [])) if m.id in ids]
+
+    async def pin(
+        self, chat_id: int, message_id: int, pinned: bool, silent: bool = False,
+        only_me: bool = False,
+    ) -> None:
+        how = ":silent" * silent + ":only me" * only_me
+        await self._step("pin" if pinned else "unpin", f"{chat_id}:{message_id}{how}")
+        pins = self.pins.setdefault(chat_id, [])
+        if message_id in pins:
+            pins.remove(message_id)
+        if pinned:
+            pins.append(message_id)
+
+    # -- managing chats
+
+    async def mute(self, chat_id: int, until: float) -> None:
+        await self._step("mute", f"{chat_id}:{until}")
+        self.chat_map[chat_id] = replace(self.chat_map[chat_id], muted_until=until)
+
+    async def archive(self, chat_id: int, archived: bool) -> None:
+        await self._step("archive" if archived else "unarchive", str(chat_id))
+        self.chat_map[chat_id] = replace(self.chat_map[chat_id], archived=archived)
+
+    async def pin_chat(self, chat_id: int, pinned: bool) -> None:
+        await self._step("pin_chat" if pinned else "unpin_chat", str(chat_id))
+        order = sorted((c for c in self.chat_map.values() if c.pin), key=lambda c: c.pin)
+        order = [c.id for c in order if c.id != chat_id]
+        if pinned:
+            if len(order) >= self.most_pinned_chats:
+                raise BackendError(ErrorKind.REFUSED, "You have pinned as many chats as "
+                                   "Telegram allows. Unpin one first.")  # fmt: skip
+            order.insert(0, chat_id)
+        for chat in list(self.chat_map.values()):
+            place = order.index(chat.id) + 1 if chat.id in order else 0
+            self.chat_map[chat.id] = replace(chat, pin=place)
+
+    async def mark_unread(self, chat_id: int, unread: bool) -> None:
+        await self._step("mark_unread" if unread else "mark_not_unread", str(chat_id))
+        self.chat_map[chat_id] = replace(self.chat_map[chat_id], marked_unread=unread)
 
     # -- searching
 

@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     from peyk.platform.notify import Toaster
 
     lock = InstanceLock(paths.lock)
-    notifier = Toaster() if config.notifications else None
+    notifier = Toaster()  # also when they are off: they can be turned on in Peyk
     try:
         lock.acquire()
     except AlreadyRunning:
@@ -72,8 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         logs.setup(paths.log)
-        if notifier:
-            notifier.start()
+        notifier.start()
         PeykApp(
             config,
             paths,

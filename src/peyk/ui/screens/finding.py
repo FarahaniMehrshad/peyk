@@ -140,8 +140,10 @@ class Finding(_Base):
 
     def _command_given(self, action: str | None) -> None:
         if action:
+            action, _, argument = action.partition(" ")
+            work = getattr(self, f"do_{action}")
             # After the command bar is gone: the command may open another screen.
-            self.call_later(getattr(self, f"do_{action}"))
+            self.call_later(work, argument) if argument else self.call_later(work)
 
     def do_help(self) -> None:
         self.app.push_screen(HelpScreen(self._keys))

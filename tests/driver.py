@@ -1,5 +1,6 @@
 """Runs the app on made-up chats and presses keys."""
 
+from fake_audio import FakeAudio
 from peyk.backend.base import BackendError, ErrorKind
 from peyk.backend.fake import FakeBackend
 from peyk.config import Config
@@ -60,17 +61,19 @@ class Driver:
 
 class run:
     def __init__(
-        self, size=(120, 36), backend=None, config=None, graphics=None, palette=None, **options
-    ):
+        self, size=(120, 36), backend=None, config=None, graphics=None, palette=None,
+        audio=None, **options,
+    ):  # fmt: skip
         self.backend = backend or FakeBackend(**options)
-        self.app = PeykApp(
-            config or Config(), None, backend=self.backend, graphics=graphics, palette=palette
-        )
+        self.audio = audio or FakeAudio()
+        self.app = PeykApp(config or Config(), None, backend=self.backend, graphics=graphics,
+                           palette=palette, audio=self.audio)  # fmt: skip
         self.context = self.app.run_test(size=size)
 
     async def __aenter__(self):
         pilot = await self.context.__aenter__()
         driver = Driver(pilot, self.backend)
+        driver.audio = self.audio
         await driver.settle()
         await driver.settle()
         return driver

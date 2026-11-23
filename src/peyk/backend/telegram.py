@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import mimetypes
 from collections import OrderedDict
@@ -35,6 +36,7 @@ from peyk.backend.base import (
     LinkListener,
     MessageAdded,
     MessageChanged,
+    MessagesPinned,
     MessagesRemoved,
     OutboxRead,
     PinsChanged,
@@ -61,6 +63,7 @@ from peyk.models import (
     Span,
     StickerPack,
     User,
+    VoiceNote,
 )
 from peyk.text import markup
 from peyk.text.sanitize import sanitize_line
@@ -78,6 +81,7 @@ MAX_REMEMBERED = 2000  # messages with files
 MENU_LASTS = 600  # seconds
 MAX_CUSTOM = 100  # per request
 MOST_REACTIONS, MOST_WITH_PREMIUM = 1, 3
+MUTED_FOREVER = 2**31 - 1  # what Telegram takes for ever
 _OFFLINE = "Could not reach Telegram. Check your connection or proxy."
 
 _CODE_PLACES: dict[type, str] = {
@@ -116,6 +120,8 @@ _REFUSALS: dict[type, str] = {
     errors.ChatSendPhotosForbiddenError: _NO_FILES,
     errors.ChatSendVideosForbiddenError: _NO_FILES,
     errors.ChatSendGifsForbiddenError: "This chat does not allow GIFs.",
+    errors.ChatSendVoicesForbiddenError: "This chat does not allow voice messages.",
+    errors.VoiceMessagesForbiddenError: "This person does not accept voice messages.",
     errors.ChatSendStickersForbiddenError: "This chat does not allow stickers.",
     errors.StickersetInvalidError: "This sticker set no longer exists.",
     errors.PhotoInvalidDimensionsError: _BAD_PHOTO,
@@ -132,6 +138,11 @@ _REFUSALS: dict[type, str] = {
     errors.ReactionsTooManyError: "This message has too many different reactions already.",
     errors.PremiumAccountRequiredError: "That needs Telegram Premium.",
     errors.MessageDeleteForbiddenError: "You cannot delete this message for everyone.",
+    errors.ChatForwardsRestrictedError: "This chat does not allow forwarding.",
+    errors.PinnedDialogsTooMuchError: (
+        "You have pinned as many chats as Telegram allows. Unpin one first."
+    ),
+    errors.PinRestrictedError: "You are not allowed to pin messages here.",
 }
 # Codes that Telethon has no class for.
 _REFUSAL_CODES: dict[str, str] = {
@@ -155,7 +166,7 @@ _STALE_REFERENCE = (
 @dataclass(frozen=True, slots=True)
 class Uploaded:
     handle: Any
-    attachment: Attachment
+    attachment: Attachment | VoiceNote
     as_photo: bool
 
 
@@ -780,8 +791,18 @@ class TelegramBackend:
 
     # -- files ---------------------------------------------------------------
 
-    async def upload(self, attachment: Attachment, progress: Progress) -> Uploaded:
+    async def upload(self, attachment: Attachment | VoiceNote, progress: Progress) -> Uploaded:
         client = self._need_client()
+        if isinstance(attachment, VoiceNote):
+            data = attachment.data
+            handle = await self._watched(
+                lambda tick: client.upload_file(
+                    io.BytesIO(data), file_size=len(data), file_name=attachment.name,
+                    progress_callback=tick,
+                ),
+                progress,
+            )  # fmt: skip
+            return Uploaded(handle, attachment, False)
         photo = None
         if attachment.as_photo:
             photo = await asyncio.to_thread(images.as_photo, attachment.path)
@@ -875,6 +896,73 @@ class TelegramBackend:
                     progress(int(done), int(total or 0))
 
                 return await start(tick)
+
+    # -- forwarding and pinning ------------------------------------------------
+
+    async def forward(
+        self, from_chat: int, message_id: int, to_chat: int, token: int, with_author: bool
+    ) -> Message | None:
+        client = self._need_client()
+        to_peer = await self._peer(to_chat)
+        request = functions.messages.ForwardMessagesRequest(
+            from_peer=await self._peer(from_chat),
+            id=[message_id],
+            random_id=[token],
+            to_peer=to_peer,
+            drop_author=None if with_author else True,
+        )
+        try:
+            result = await self._call(client(request))
+        except BackendError as error:
+            if isinstance(error.__cause__, errors.RandomIdDuplicateError):
+                return None
+            raise
+        found = client._get_response_message(request, result, to_peer)
+        raws = [m for m in (found if isinstance(found, list) else [found]) if m is not None]
+        sent = await self._converted(to_chat, raws)
+        return sent[0] if sent else None
+
+    async def pinned(self, chat_id: int) -> list[Message]:
+        client = self._need_client()
+        work = client.get_messages(chat_id, limit=BATCH, filter=types.InputMessagesFilterPinned())
+        return list(reversed(await self._converted(chat_id, await self._call(work))))
+
+    async def pin(
+        self, chat_id: int, message_id: int, pinned: bool, silent: bool = False,
+        only_me: bool = False,
+    ) -> None:
+        request = functions.messages.UpdatePinnedMessageRequest(
+            await self._peer(chat_id),
+            message_id,
+            silent=silent or None,
+            unpin=None if pinned else True,
+            pm_oneside=only_me or None,
+        )
+        await self._call(self._need_client()(request))
+
+    # -- managing chats --------------------------------------------------------
+
+    async def mute(self, chat_id: int, until: float) -> None:
+        peer = types.InputNotifyPeer(await self._peer(chat_id))
+        moment = MUTED_FOREVER if until == float("inf") else int(until)
+        settings = types.InputPeerNotifySettings(mute_until=moment)
+        request = functions.account.UpdateNotifySettingsRequest(peer, settings)
+        await self._call(self._need_client()(request))
+
+    async def archive(self, chat_id: int, archived: bool) -> None:
+        moved = types.InputFolderPeer(await self._peer(chat_id), 1 if archived else 0)
+        request = functions.folders.EditPeerFoldersRequest([moved])
+        await self._call(self._need_client()(request))
+
+    async def pin_chat(self, chat_id: int, pinned: bool) -> None:
+        dialog = types.InputDialogPeer(await self._peer(chat_id))
+        request = functions.messages.ToggleDialogPinRequest(dialog, pinned=pinned or None)
+        await self._call(self._need_client()(request))
+
+    async def mark_unread(self, chat_id: int, unread: bool) -> None:
+        dialog = types.InputDialogPeer(await self._peer(chat_id))
+        request = functions.messages.MarkDialogUnreadRequest(dialog, unread=unread or None)
+        await self._call(self._need_client()(request))
 
     # -- stickers and GIFs ---------------------------------------------------
 
@@ -1104,6 +1192,12 @@ class TelegramBackend:
                     self._emit(ChatFlags(chat_id, archived=item.folder_id == 1))
             case types.UpdateDialogPinned() | types.UpdatePinnedDialogs():
                 self._emit(PinsChanged())
+            case types.UpdatePinnedMessages():
+                chat_id = utils.get_peer_id(update.peer)
+                self._emit(MessagesPinned(chat_id, tuple(update.messages), bool(update.pinned)))
+            case types.UpdatePinnedChannelMessages():
+                chat_id = utils.get_peer_id(types.PeerChannel(update.channel_id))
+                self._emit(MessagesPinned(chat_id, tuple(update.messages), bool(update.pinned)))
             case (
                 types.UpdateDialogFilter()
                 | types.UpdateDialogFilters()
@@ -1142,6 +1236,12 @@ def _as_results(some: Iterable[Any]) -> Any:
 def _input_media(uploaded: Uploaded) -> Any:
     if uploaded.as_photo:
         return types.InputMediaUploadedPhoto(uploaded.handle)
+    if isinstance(uploaded.attachment, VoiceNote):
+        note = uploaded.attachment
+        sound = types.DocumentAttributeAudio(
+            note.duration, voice=True, waveform=utils.encode_waveform(note.waveform)
+        )
+        return types.InputMediaUploadedDocument(uploaded.handle, "audio/ogg", [sound])
     path = uploaded.attachment.path
     name = safe_name(path.name)
     mime = mimetypes.guess_type(name)[0] or "application/octet-stream"

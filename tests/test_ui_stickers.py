@@ -288,7 +288,7 @@ async def test_sixels_where_the_stickers_are(monkeypatch):
 
 async def test_own_keys():
     keys = resolve({"stickers": "S", "gifs": "ctrl+g", "focus_chat": "n"})
-    async with run(config=Config(keys=keys)) as d:
+    async with run(size=(120, 60), config=Config(keys=keys)) as d:  # all of the help
         await d.open(sample.SARA)
         await d.press("s")
         assert not isinstance(d.app.screen, StickerPicker)

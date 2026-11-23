@@ -18,8 +18,13 @@ _SKIES = (
 )
 
 
+VOICE_BYTES = 2000  # a second of Opus, about
+
+
 def content(media: Media) -> bytes:
     """The whole file."""
+    if media.kind == "voice":
+        return _voice(media.id, media.size // VOICE_BYTES)
     if media.kind == "photo":
         return picture(media)
     if media.mime == "text/plain":
@@ -39,6 +44,25 @@ def tiny(media: Media) -> bytes:
     image = Image.open(io.BytesIO(picture(media))).convert("RGB")
     image.thumbnail((40, 40))
     return _encoded(image, "JPEG", quality=30)
+
+
+@lru_cache(maxsize=8)
+def _voice(seed: int, seconds: int) -> bytes:
+    """A little tune: notes that rise and fall, so the waveform has a shape."""
+    import numpy as np
+
+    from peyk import audio
+
+    notes = (262, 294, 330, 392, 440, 392, 330, 294)
+    rate, beat = audio.RATE, 0.25
+    time = np.arange(int(beat * rate)) / rate
+    fade = np.minimum(1, np.minimum(time, beat - time) * 40)
+    parts = []
+    for i in range(int(max(1, seconds) / beat)):
+        pitch = notes[(i + seed) % len(notes)]
+        loud = 0.15 + 0.25 * (1 + math.sin(i / 3)) / 2
+        parts.append(loud * fade * np.sin(2 * math.pi * pitch * time))
+    return audio.encode(np.concatenate(parts).astype(np.float32))
 
 
 def size_of(data: bytes) -> tuple[int, int]:

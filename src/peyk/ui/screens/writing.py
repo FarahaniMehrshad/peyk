@@ -282,7 +282,9 @@ class Writing(_Base):
     def _take_back(self, message: Message) -> None:
         """An unsent message returns to the box."""
         if self.outbox.is_ready_file(message.id):
-            self._flash("A sticker or GIF cannot be edited. Send it again or discard it.")
+            voice = message.media is not None and message.media.kind == "voice"
+            what = "A voice message" if voice else "A sticker or GIF"
+            self._flash(f"{what} cannot be edited. Send it again or discard it.")
             return
         if self.draft.unsent:
             self._flash("Send or clear what you are writing first.")

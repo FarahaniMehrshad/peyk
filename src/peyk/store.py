@@ -14,6 +14,7 @@ from peyk.backend.base import (
     InboxRead,
     MessageAdded,
     MessageChanged,
+    MessagesPinned,
     MessagesRemoved,
     OutboxRead,
     PinsChanged,
@@ -115,6 +116,8 @@ class Change:
     typing: bool = False
     reload_chats: bool = False
     reload_folders: bool = False
+    pins: set[int] = field(default_factory=set)  # chats whose pinned messages changed
+    stale_pins: set[int] = field(default_factory=set)  # ... to an unknown message
 
 
 class Store:
@@ -123,6 +126,7 @@ class Store:
         self.folders: list[Folder] = []
         self.histories: dict[int, History] = {}
         self._typing: dict[int, dict[int, Typist]] = {}
+        self.pins: dict[int, list[Message]] = {}  # newest first; once asked for
 
     # -- reading
 
@@ -201,6 +205,9 @@ class Store:
         if chat:
             self.chats[chat_id] = replace(chat, last=message)
 
+    def set_pins(self, chat_id: int, messages: Iterable[Message]) -> None:
+        self.pins[chat_id] = sorted(messages, key=lambda m: m.id, reverse=True)
+
     def apply(self, event: Event) -> Change:
         change = Change()
         match event:
@@ -208,8 +215,10 @@ class Store:
                 self._added(event, change)
             case MessageChanged():
                 self._changed(event.message, change)
+                self._pins_follow(event.message.chat_id, event.message, (), change)
             case MessagesRemoved():
                 self._removed(event, change)
+                self._pins_follow(event.chat_id, None, event.ids, change)
             case ReactionsChanged():
                 self._reacted(event, change)
             case Typing():
@@ -234,6 +243,8 @@ class Store:
                     change.reload_chats = True
             case PinsChanged():
                 change.reload_chats = True
+            case MessagesPinned():
+                self._pinned(event, change)
             case FoldersChanged():
                 change.reload_folders = True
         return change
@@ -332,6 +343,36 @@ class Store:
                     self._replace(chat, change, last=history.messages[-1])
                 else:
                     change.stale.add(chat_id)
+
+    def _pinned(self, event: MessagesPinned, change: Change) -> None:
+        pins = self.pins.get(event.chat_id)
+        if pins is None:
+            return  # asked for when the chat is opened
+        change.pins.add(event.chat_id)
+        kept = [m for m in pins if m.id not in event.ids]
+        if not event.pinned:
+            self.pins[event.chat_id] = kept
+            return
+        history = self.histories.get(event.chat_id)
+        found = [history.get(i) if history else None for i in event.ids]
+        if all(found):
+            self.set_pins(event.chat_id, [*kept, *found])  # type: ignore[list-item]
+        else:
+            change.stale_pins.add(event.chat_id)
+
+    def _pins_follow(
+        self, chat_id: int | None, changed: Message | None, gone: Iterable[int], change: Change
+    ) -> None:
+        """Pinned messages that were edited or deleted."""
+        gone = set(gone)
+        for pinned_in, pins in self.pins.items():
+            if chat_id not in (None, pinned_in) or (chat_id is None and is_channel_id(pinned_in)):
+                continue
+            updated = [changed if changed and m.id == changed.id else m for m in pins]
+            updated = [m for m in updated if m.id not in gone]
+            if updated != pins:
+                self.pins[pinned_in] = updated
+                change.pins.add(pinned_in)
 
     def _inbox_read(self, event: InboxRead, change: Change) -> None:
         chat = self.chats.get(event.chat_id)

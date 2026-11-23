@@ -13,7 +13,7 @@ from textual import on
 
 from peyk import files
 from peyk.backend.base import BackendError
-from peyk.models import Attachment, Media, Message, State
+from peyk.models import Attachment, Media, Message, Span, State
 from peyk.platform import opener
 from peyk.platform.opener import CannotOpen
 from peyk.ui.screens.confirm import Answer, ChoiceScreen
@@ -48,17 +48,23 @@ def links(message: Message) -> list[tuple[str, str]]:
     """(what is shown, where it goes) of the web links in a message."""
     found: list[tuple[str, str]] = []
     for span in message.spans:
-        if span.kind != "link":
-            continue
-        shown = message.text[span.start : span.end]
-        url = span.url or shown
-        if not span.url and "@" in shown and "/" not in shown:
-            continue  # an email address
-        if "://" not in url:
-            url = f"https://{url}"
-        if opener.is_web_link(url) and (shown, url) not in found:
-            found.append((shown, url))
+        target = web_link(message, span)
+        if target and target not in found:
+            found.append(target)
     return found
+
+
+def web_link(message: Message, span: Span) -> tuple[str, str] | None:
+    """(what is shown, where it goes), if the span is a web link."""
+    if span.kind != "link":
+        return None
+    shown = message.text[span.start : span.end]
+    url = span.url or shown
+    if not span.url and "@" in shown and "/" not in shown:
+        return None  # an email address
+    if "://" not in url:
+        url = f"https://{url}"
+    return (shown, url) if opener.is_web_link(url) else None
 
 
 class MediaActions(_Base):
@@ -133,6 +139,20 @@ class MediaActions(_Base):
             ChoiceScreen("Open what?", answers, options=self._options, stacked=True), answered
         )
 
+    @on(Conversation.LinkClicked)
+    def _link_clicked(self, event: Conversation.LinkClicked) -> None:
+        message = event.message
+        span = next(
+            (s for s in message.spans if s.kind == "link" and s.start == event.start), None
+        )
+        target = web_link(message, span) if span else None
+        if message.state is not State.SENT:
+            return  # still being written to Telegram; links work once it is sent
+        if target is None:
+            self._flash("Only web links can be opened.")
+            return
+        self._open_link(*target)
+
     def _open_link(self, shown: str, url: str) -> None:
         if url in (shown, f"https://{shown}"):  # exactly: the end alone can be made to match
             self._start_link(url)
@@ -159,6 +179,9 @@ class MediaActions(_Base):
     def _open_media(self, message: Message) -> None:
         media = message.media
         assert media
+        if media.kind == "voice" and media.id:  # in memory only, so even where saving is not
+            self._play_voice(message)
+            return
         if media.locked:
             self._flash(media.locked)
             return

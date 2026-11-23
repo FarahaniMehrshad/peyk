@@ -124,6 +124,12 @@ def _span(text: str, part: str, kind: str, url: str = "") -> Span:
     return Span(start, start + len(part), kind, url)
 
 
+def _voice(media_id: int, seconds: int) -> Media:
+    """Its sound is made when asked for; `size` gives its length."""
+    size = seconds * sample_files.VOICE_BYTES
+    return Media("voice", f"Voice message 0:{seconds:02}", media_id, "", "audio/ogg", size)
+
+
 def _photo(media_id: int, width: int, height: int, **extra) -> Media:
     media = Media("photo", f"Photo {width}x{height}", media_id, "", "image/jpeg", 90_000,
                   True, width, height, **extra)  # fmt: skip
@@ -213,6 +219,7 @@ def build(now: datetime | None = None) -> tuple[list[Chat], dict[int, list[Messa
                                        "application/octet-stream", 12_000))  # fmt: skip
     w.say(reza, "", media=Media("photo", "Photo 800x600", 27, "", "image/jpeg", 90_000, True,
                                 800, 600, locked=_LOCKED))  # fmt: skip
+    w.say(mina, "", media=_voice(28, 6))
     links = "Two links: https://example.com/a and the docs"
     hidden = _span(links, "the docs", "link", "https://example.org/docs")
     w.say(park, links, spans=(_span(links, "https://example.com/a", "link"), hidden))

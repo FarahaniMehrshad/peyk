@@ -19,6 +19,7 @@ from peyk.models import (
     Span,
     StickerPack,
     User,
+    VoiceNote,
 )
 
 
@@ -130,7 +131,14 @@ class ChatFlags:
 
 @dataclass(frozen=True, slots=True)
 class PinsChanged:
-    pass
+    """Of chats in the list."""
+
+
+@dataclass(frozen=True, slots=True)
+class MessagesPinned:
+    chat_id: int
+    ids: tuple[int, ...]
+    pinned: bool  # False: unpinned
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +156,7 @@ Event = (
     | OutboxRead
     | ChatFlags
     | PinsChanged
+    | MessagesPinned
     | FoldersChanged
 )
 
@@ -217,7 +226,7 @@ class Backend(Protocol):
         """
         ...
 
-    async def upload(self, attachment: Attachment, progress: Progress) -> Any: ...
+    async def upload(self, attachment: Attachment | VoiceNote, progress: Progress) -> Any: ...
 
     async def picture(self, chat_id: int, message_id: int, side: int) -> bytes | None:
         """The picture in a message, about `side` pixels or the largest there is."""
@@ -262,6 +271,33 @@ class Backend(Protocol):
     async def typing(self, chat_id: int) -> None:
         """Tell them that we are typing. It lasts for a few seconds."""
         ...
+
+    async def forward(
+        self, from_chat: int, message_id: int, to_chat: int, token: int, with_author: bool
+    ) -> Message | None:
+        """Like `send`: the same token never forwards twice; then it may return None."""
+        ...
+
+    async def pinned(self, chat_id: int) -> list[Message]:
+        """The chat's pinned messages, newest first."""
+        ...
+
+    async def pin(
+        self, chat_id: int, message_id: int, pinned: bool, silent: bool = False,
+        only_me: bool = False,
+    ) -> None:
+        """`silent`: without telling the members. `only_me`: in a private chat."""
+        ...
+
+    async def mute(self, chat_id: int, until: float) -> None:
+        """Until that Unix time; FOREVER, or 0 to unmute."""
+        ...
+
+    async def archive(self, chat_id: int, archived: bool) -> None: ...
+
+    async def pin_chat(self, chat_id: int, pinned: bool) -> None: ...
+
+    async def mark_unread(self, chat_id: int, unread: bool) -> None: ...
 
     async def find_chats(self, query: str) -> list[Chat]:
         """Contacts and chats the user knows, whether or not they are in the list."""

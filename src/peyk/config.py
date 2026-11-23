@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 import textwrap
 import tomllib
 from dataclasses import dataclass, field
@@ -143,6 +145,55 @@ def parse(text: str) -> Config:
                 raise ConfigError(f"[{section}] {key} must be one of: {options}")
             values[name] = value
     return Config(**values)
+
+
+_HEADER = re.compile(r"\s*\[([^\]]+)\]\s*(#.*)?")
+
+
+def save_setting(path: Path, section: str, key: str, value: bool) -> None:
+    """Changes one line of config.toml; everything else stays as it was written."""
+    literal = "true" if value else "false"
+    try:
+        with open(path, encoding="utf-8", newline="") as file:  # line ends as they are
+            text = file.read()
+    except FileNotFoundError:
+        text = TEMPLATE
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConfigError(f"could not be read: {error}") from error
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines(keepends=True)
+    setting = re.compile(rf"(\s*{re.escape(key)}\s*=\s*)(true|false)(\s*(#.*)?)")
+    current, header_at, changed = None, None, False
+    for i, line in enumerate(lines):
+        body = line.rstrip("\r\n")
+        ending = line[len(body) :]
+        if found := _HEADER.fullmatch(body.lstrip("\N{ZERO WIDTH NO-BREAK SPACE}")):
+            current = found.group(1).strip()
+            if current == section and header_at is None:
+                header_at = i
+        elif current == section and (found := setting.fullmatch(body)):
+            lines[i] = found.group(1) + literal + found.group(3) + ending
+            changed = True
+            break
+    if not changed and header_at is not None:
+        lines.insert(header_at + 1, f"{key} = {literal}{newline}")
+    elif not changed:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += newline
+        lines.append(f"{newline}[{section}]{newline}{key} = {literal}{newline}")
+    new = "".join(lines)
+    # Only what still reads, and reads as meant.
+    if getattr(parse(new), _FIELDS[section, key][0]) != value:
+        raise ConfigError(f"[{section}] {key} could not be changed")
+    part = path.with_name(path.name + ".new")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(part, "w", encoding="utf-8", newline="") as out:
+            out.write(new)
+        os.replace(part, path)
+    except OSError as error:
+        part.unlink(missing_ok=True)
+        raise ConfigError(f"could not be saved: {error}") from error
 
 
 def load(path: Path, create: bool = True) -> Config:

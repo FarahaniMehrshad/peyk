@@ -20,6 +20,13 @@ class Command:
     action: str  # a do_... method of the main screen
     help: str
     aliases: tuple[str, ...] = ()
+    choices: tuple[str, ...] = ()  # of what may follow it
+
+
+def split(typed: str) -> tuple[str, str]:
+    """The command's name and what follows it."""
+    name, _, rest = typed.strip().partition(" ")
+    return name, rest.strip().lower()
 
 
 COMMANDS = (
@@ -28,9 +35,16 @@ COMMANDS = (
     Command("saved", "saved", "open Saved Messages"),
     Command("read", "mark_read", "mark the chat as read"),
     Command("attach", "attach", "send a file"),
+    Command("forward", "forward", "forward the selected message"),
+    Command("pin", "pin", "pin the selected message"),
+    Command("unpin", "unpin", "unpin the selected or shown message"),
+    Command("chat", "chat_menu", "mute, archive, pin or mark the chat"),
     Command("sticker", "stickers", "send a sticker"),
     Command("gif", "gifs", "send a GIF"),
+    Command("voice", "voice", "record a voice message"),
     Command("downloads", "downloads", "show the folder with downloads"),
+    Command("notifications", "notifications", "on or off, or alone to switch them",
+            choices=("on", "off")),  # fmt: skip
     Command("close", "close_tab", "close this tab", ("x",)),
     Command("only", "close_others", "close the other tabs"),
     Command("logout", "logout", "log out of Telegram"),
@@ -39,7 +53,7 @@ COMMANDS = (
 
 def find(typed: str) -> Command | None:
     """By name, alias, or the start of only one name."""
-    typed = typed.strip().removeprefix(":").lower()
+    typed = split(typed.removeprefix(":"))[0].lower()
     for command in COMMANDS:
         if typed == command.name or typed in command.aliases:
             return command
@@ -70,12 +84,12 @@ class CommandScreen(ModalScreen[str | None]):
         return self.query_one(EditBox)
 
     def _matching(self) -> list[Command]:
-        typed = self._box.text.strip().lower()
+        typed = split(self._box.text)[0].lower()
         return [c for c in COMMANDS if c.name.startswith(typed) or typed in c.aliases]
 
     def _suggest(self, trouble: str = "") -> None:
         found = self._matching()
-        lines = [f"{c.name:<10} {c.help}" for c in found]
+        lines = [f"{c.name:<14} {c.help}" for c in found]
         self.query_one("#command-help", Static).update(trouble or "\n".join(lines))
 
     @on(EditBox.Changed)
@@ -86,8 +100,12 @@ class CommandScreen(ModalScreen[str | None]):
     def _run(self) -> None:
         typed = self._box.text.strip()
         command = find(typed)
-        if command:
-            self.dismiss(command.action)
+        argument = split(typed)[1]
+        if command and argument and argument not in command.choices:
+            takes = " or ".join(command.choices) if command.choices else "nothing after it"
+            self._suggest(f"{command.name} takes {takes}.")
+        elif command:
+            self.dismiss(f"{command.action} {argument}".strip())
         elif typed:
             self._suggest(f"No command '{typed}'. Try help.")
         else:

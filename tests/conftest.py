@@ -4,7 +4,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from peyk import files
+from peyk import audio, files
 from peyk.paths import Paths
 from peyk.platform import clipboard, notify, opener
 
@@ -17,6 +17,16 @@ def home(tmp_path, monkeypatch):
                  "all_proxy"):  # fmt: skip
         monkeypatch.delenv(name, raising=False)
     return Paths.default()
+
+
+@pytest.fixture(autouse=True)
+def no_sound_devices(monkeypatch):
+    """Speakers and microphones are never touched: tests use fake_audio."""
+
+    def refuse():
+        raise AssertionError("a test reached the real sound devices")
+
+    monkeypatch.setattr(audio, "_sounddevice", refuse)
 
 
 @pytest.fixture(autouse=True)

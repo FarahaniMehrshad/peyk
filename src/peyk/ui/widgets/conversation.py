@@ -29,6 +29,8 @@ from peyk.ui.gallery import NOTHING, Gallery
 from peyk.ui.widgets.sixels import SixelLayer, Spot
 from peyk.ui.widgets.strips import Row, TextOptions, backdrop, ink
 
+LINK = "peyk-link"  # meta of the characters of a link: where it starts in the text
+
 GUTTER = 2
 SIDE = 10  # time and ticks on the right
 GROUP_GAP = timedelta(minutes=5)
@@ -108,6 +110,14 @@ class Conversation(Widget):
 
     class Moved(UiMessage):
         """What is visible may have changed."""
+
+    class LinkClicked(UiMessage):
+        """The link that starts at `start` in the message's text."""
+
+        def __init__(self, message: Message, start: int) -> None:
+            super().__init__()
+            self.message = message
+            self.start = start
 
     class Looked(UiMessage):
         """These messages with pictures are in view."""
@@ -450,36 +460,56 @@ class Conversation(Widget):
         options = self._options
         lines = layout(message.text, room, options.mode, lam_alef=options.lam_alef)
         kinds: list[set[str]] | None = None
+        links: list[int] = []  # for each character, where its link starts, or -1
         if message.spans:
             kinds = [set() for _ in message.text]
+            links = [-1] * len(message.text)
             for span in message.spans:
                 for i in range(span.start, min(span.end, len(kinds))):
                     kinds[i].add(span.kind)
+                    if span.kind == "link":
+                        links[i] = span.start
         result = []
         for line in lines:
-            result.append((self._pieces(line, kinds, selected), line.width, line.rtl))
+            result.append((self._pieces(line, kinds, links, selected), line.width, line.rtl))
         return result
 
-    def _pieces(self, line: VisualLine, kinds: list[set[str]] | None, reveal: bool):
+    def _pieces(
+        self, line: VisualLine, kinds: list[set[str]] | None, links: list[int], reveal: bool
+    ):
         if kinds is None:
             return [(line.text, line.width, None)]
         pieces: list[tuple[str, int, Style | None]] = []
-        current: frozenset[str] | None = None
+        current: tuple[frozenset[str], int] | None = None
         text, cells = "", 0
         for cell in line.cells:
-            kind = frozenset(kinds[cell.start]) if cell.start < len(kinds) else frozenset()
+            inside = cell.start < len(kinds)
+            kind = frozenset(kinds[cell.start]) if inside else frozenset()
             glyph = cell.text
-            if "spoiler" in kind and not reveal and cell.width and not cell.space:
+            hidden = "spoiler" in kind and not reveal
+            if hidden and cell.width and not cell.space:
                 glyph = "▒" * cell.width
-            if kind != current and text:
-                pieces.append((text, cells, self._span_style(current)))
+            # A hidden link cannot be clicked: what it says is not seen.
+            look = (kind, links[cell.start] if inside and not hidden else -1)
+            if look != current and text:
+                pieces.append((text, cells, self._piece_style(current)))
                 text, cells = "", 0
-            current = kind
+            current = look
             text += glyph
             cells += cell.width
         if text:
-            pieces.append((text, cells, self._span_style(current)))
+            pieces.append((text, cells, self._piece_style(current)))
         return pieces
+
+    def _piece_style(self, look: tuple[frozenset[str], int] | None) -> Style | None:
+        if look is None:
+            return None
+        kinds, link = look
+        style = self._span_style(kinds)
+        if link < 0:
+            return style
+        # Read back from the screen when it is clicked.
+        return (style or Style()) + Style.from_meta({LINK: link})
 
     def _span_style(self, kinds: frozenset[str] | None) -> Style | None:
         if not kinds:
@@ -739,5 +769,10 @@ class Conversation(Widget):
         if 0 <= line < self._total:
             block = self._blocks[bisect_right(self._starts, line) - 1]
             if block.id:
+                # Before selecting: that shows spoilers, and what was hidden was not clicked.
+                link = self.screen.get_style_at(event.screen_x, event.screen_y).meta.get(LINK)
                 self._select(block.id)
+                message = next((m for m in self.messages if m.id == block.id), None)
+                if isinstance(link, int) and message is not None:
+                    self.post_message(self.LinkClicked(message, link))
 

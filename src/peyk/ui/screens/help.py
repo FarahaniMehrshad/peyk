@@ -31,13 +31,17 @@ SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("{delete}", "delete the selected message"),
         ("{copy}", "copy the selected message"),
         ("{react}", "react to the selected message, or take it back"),
+        ("{forward}", "forward the selected message"),
+        ("{pinned}", "go to the pinned message; again for older ones"),
+        ("{chat_menu}", "mute, archive, pin or mark the chat"),
         ("{deselect}", "stop writing, then cancel the reply or edit"),
     )),
     ("Files", (
-        ("{open_media}", "open the file or link; again stops the download"),
+        ("{open_media}", "open the file or link, play a voice message; again stops it"),
         ("{preview}", "show the picture"),
         ("{attach}", "send a file or photo"),
         ("{stickers} {gifs}", "send a sticker, a GIF"),
+        ("{voice}", "record a voice message; Enter sends it, Esc throws it away"),
     )),
     ("While writing", (
         ("Enter", "send"),
