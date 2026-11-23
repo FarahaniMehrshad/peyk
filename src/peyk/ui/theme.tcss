@@ -53,13 +53,13 @@ Input:focus {
     background: $primary 25%;
 }
 
-ChoiceScreen {
+ChoiceScreen, ReactionPicker {
     align: center middle;
     background: $background 60%;
 }
 
 /* Colours of the terminal cannot be mixed with others. */
-ChoiceScreen:ansi, Finder:ansi, HelpScreen:ansi, FilePicker:ansi, CommandScreen:ansi {
+ChoiceScreen:ansi, ReactionPicker:ansi, Finder:ansi, HelpScreen:ansi, FilePicker:ansi, CommandScreen:ansi {
     background: transparent;
 }
 
@@ -98,12 +98,27 @@ ChoiceScreen:ansi, Finder:ansi, HelpScreen:ansi, FilePicker:ansi, CommandScreen:
 }
 
 #compose {
-    border-top: solid $panel;
     padding: 0 1;
 }
 
-#compose:focus {
-    border-top: solid $edge;
+.quote {
+    color: $text-muted;
+    margin-top: 1;
+    max-height: 4;
+}
+
+.reactions {
+    border: round $edge;
+    border-title-color: $primary;
+}
+
+.quote.first {
+    margin-top: 0;
+    max-height: 2;
+}
+
+#reaction-name {
+    height: 1;
 }
 
 Finder, HelpScreen, FilePicker {
@@ -145,12 +160,6 @@ Finder, HelpScreen, FilePicker {
 .frame.small {
     width: 62;
     height: auto;
-}
-
-.quote {
-    color: $text-muted;
-    margin-top: 1;
-    max-height: 4;
 }
 
 CommandScreen {

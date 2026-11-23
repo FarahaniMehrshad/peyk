@@ -38,13 +38,27 @@ from peyk.backend.base import (
     OutboxRead,
     PinsChanged,
     Progress,
+    ReactionsChanged,
+    Typing,
     Unsubscribe,
 )
 from peyk.backend.proxy import Proxy
 from peyk.backend.session import EncryptedSession, SessionUnreadable, remove_session
 from peyk.files import Source, safe_name
 from peyk.loop import use_lazy_tasks
-from peyk.models import Attachment, Chat, Folder, Found, Kind, Message, Span, User
+from peyk.models import (
+    Attachment,
+    Chat,
+    Folder,
+    Found,
+    Kind,
+    Message,
+    Reaction,
+    ReactionChoice,
+    ReactionMenu,
+    Span,
+    User,
+)
 from peyk.text import markup
 from peyk.text.sanitize import sanitize_line
 
@@ -58,6 +72,9 @@ BATCH = 100
 SEARCH_BATCH = 30
 STALL = 60  # seconds without progress before a transfer is given up
 MAX_REMEMBERED = 2000  # messages with files
+MENU_LASTS = 600  # seconds
+MAX_CUSTOM = 100  # per request
+MOST_REACTIONS, MOST_WITH_PREMIUM = 1, 3
 _OFFLINE = "Could not reach Telegram. Check your connection or proxy."
 
 _CODE_PLACES: dict[type, str] = {
@@ -106,6 +123,9 @@ _REFUSALS: dict[type, str] = {
     errors.MessageAuthorRequiredError: "You can only edit your own messages.",
     errors.MessageEditTimeExpiredError: "This message is too old to edit.",
     errors.MessageIdInvalidError: "That message no longer exists.",
+    errors.ReactionInvalidError: "This reaction is not allowed here.",
+    errors.ReactionsTooManyError: "This message has too many different reactions already.",
+    errors.PremiumAccountRequiredError: "That needs Telegram Premium.",
     errors.MessageDeleteForbiddenError: "You cannot delete this message for everyone.",
 }
 # Codes that Telethon has no class for.
@@ -116,6 +136,8 @@ _REFUSAL_CODES: dict[str, str] = {
     "CHAT_SEND_DOCS_FORBIDDEN": _NO_FILES,
     "CHAT_SEND_AUDIOS_FORBIDDEN": _NO_FILES,
     "IMAGE_PROCESS_FAILED": _BAD_PHOTO,
+    "ANONYMOUS_REACTIONS_DISABLED": "Anonymous admins cannot react here.",
+    "CHAT_SEND_REACTIONS_FORBIDDEN": "Reactions are not allowed in this chat.",
 }
 _STALE_REFERENCE = (
     errors.FileReferenceExpiredError,
@@ -189,6 +211,10 @@ class TelegramBackend:
         self._default_mute: dict[Kind, float] = {}
         # Raw messages that have files: these carry what it takes to fetch them.
         self._raws: OrderedDict[tuple[int, int], Any] = OrderedDict()
+        self._premium = False
+        self._custom: dict[int, str] = {}  # what stands in for custom emoji
+        self._choices: list[tuple[ReactionChoice, bool]] | None = None  # needs Premium?
+        self._menus: dict[int, tuple[float, ReactionMenu]] = {}
         self.link = Link.OFFLINE
 
     # -- connection ---------------------------------------------------------
@@ -366,6 +392,7 @@ class TelegramBackend:
         if user is None:
             raise BackendError(ErrorKind.SESSION, "Telegram signed this session out.")
         self._me = user.id
+        self._premium = bool(user.premium)
         client.flood_sleep_threshold = FLOOD_SLEEP
         name = " ".join(part for part in (user.first_name, user.last_name) if part)
         return User(user.id, sanitize_line(name) or "Telegram user",
@@ -450,7 +477,7 @@ class TelegramBackend:
             self._raws.popitem(last=False)
 
     async def _with_replies(self, chat_id: int, messages: list[Message]) -> list[Message]:
-        """Fill in what replies refer to, fetching originals outside the page."""
+        """Fill in what replies and custom emoji refer to."""
         known = {m.id: m for m in messages}
         wanted = {m.reply.id for m in messages if m.reply} - set(known)
         if wanted:
@@ -472,7 +499,39 @@ class TelegramBackend:
                 )
                 message = replace(message, reply=reply)
             filled.append(message)
-        return filled
+        return await self._with_custom_emoji(filled)
+
+    async def _with_custom_emoji(self, messages: list[Message]) -> list[Message]:
+        await self._learn_emoji(*(m.reactions for m in messages if m.reactions))
+        return [
+            replace(m, reactions=self._labelled(m.reactions)) if m.reactions else m
+            for m in messages
+        ]
+
+    def _labelled(self, reactions: tuple[Reaction, ...]) -> tuple[Reaction, ...]:
+        return tuple(
+            replace(r, label=self._custom[i])
+            if (i := next(iter(convert.custom_ids([r])), 0)) in self._custom
+            else r
+            for r in reactions
+        )
+
+    async def _learn_emoji(self, *reactions: tuple[Reaction, ...]) -> None:
+        """Which ordinary emoji stand in for the custom ones."""
+        wanted = sorted(set().union(*map(convert.custom_ids, reactions)) - set(self._custom))
+        for start in range(0, len(wanted), MAX_CUSTOM):
+            ids = wanted[start : start + MAX_CUSTOM]
+            request = functions.messages.GetCustomEmojiDocumentsRequest(ids)
+            try:
+                found = await self._call(self._need_client()(request))
+            except BackendError as error:
+                log.info("custom emoji unavailable: %s", error.kind.name)
+                return
+            self._custom |= dict.fromkeys(ids, convert.UNKNOWN_EMOJI)  # not asked for again
+            for document in found:
+                for attribute in getattr(document, "attributes", None) or ():
+                    if isinstance(attribute, types.DocumentAttributeCustomEmoji):
+                        self._custom[document.id] = convert.emoji(attribute.alt)
 
     async def mark_read(self, chat_id: int, up_to: int, mentions: bool = False) -> None:
         client = self._need_client()
@@ -578,6 +637,125 @@ class TelegramBackend:
     async def delete(self, chat_id: int, ids: list[int], for_everyone: bool) -> None:
         client = self._need_client()
         await self._call(client.delete_messages(chat_id, ids, revoke=for_everyone))
+
+    # -- reactions and typing ------------------------------------------------
+
+    async def reaction_menu(self, chat_id: int) -> ReactionMenu:
+        known = self._menus.get(chat_id)
+        now = asyncio.get_running_loop().time()
+        if known and known[0] > now:
+            return known[1]
+        choices = await self._all_choices()
+        most = MOST_WITH_PREMIUM if self._premium else MOST_REACTIONS
+        allowed = await self._allowed_reactions(chat_id)
+        if allowed is None:
+            usable = [c for c, premium in choices if self._premium or not premium]
+        else:
+            names = {c.key: c for c, _ in choices}
+            await self._learn_emoji(allowed)
+            usable = [
+                names.get(r.key) or ReactionChoice(r.key, r.label)
+                for r in self._labelled(allowed)
+            ]
+        menu = ReactionMenu(tuple(usable), most)
+        self._menus[chat_id] = (now + MENU_LASTS, menu)
+        return menu
+
+    async def _all_choices(self) -> list[tuple[ReactionChoice, bool]]:
+        """Those we use most come first."""
+        if self._choices is None:
+            client = self._need_client()
+            found = await self._call(client(functions.messages.GetAvailableReactionsRequest(0)))
+            choices = [
+                (ReactionChoice(r.reaction, convert.emoji(r.reaction), sanitize_line(r.title)),
+                 bool(r.premium))
+                for r in found.reactions
+                if not r.inactive
+            ]  # fmt: skip
+            try:
+                request = functions.messages.GetTopReactionsRequest(limit=50, hash=0)
+                top = (await self._call(client(request))).reactions
+            except BackendError as error:
+                log.info("no favourite reactions: %s", error.kind.name)
+                top = []
+            order = {convert.reaction_key(raw): i for i, raw in enumerate(top)}
+            choices.sort(key=lambda c: order.get(c[0].key, len(order)))
+            self._choices = choices
+        return self._choices
+
+    async def _allowed_reactions(self, chat_id: int) -> tuple[Reaction, ...] | None:
+        """None: all of them."""
+        peer = await self._peer(chat_id)
+        match peer:
+            case types.InputPeerChannel():
+                channel = types.InputChannel(peer.channel_id, peer.access_hash)
+                request = functions.channels.GetFullChannelRequest(channel)
+            case types.InputPeerChat():
+                request = functions.messages.GetFullChatRequest(peer.chat_id)
+            case _:
+                return None
+        full = (await self._call(self._need_client()(request))).full_chat
+        match full.available_reactions:
+            case types.ChatReactionsAll():
+                return None
+            case types.ChatReactionsSome(reactions=some):
+                return convert.reactions(_as_results(some), self._custom)
+            case _:
+                return ()
+
+    async def react(
+        self, chat_id: int, message_id: int, keys: tuple[str, ...]
+    ) -> tuple[Reaction, ...]:
+        client = self._need_client()
+        request = functions.messages.SendReactionRequest(
+            await self._peer(chat_id),
+            message_id,
+            add_to_recent=True if keys else None,
+            reaction=[convert.raw_reaction(key) for key in keys],
+        )
+        try:
+            result = await self._call(client(request))
+        except BackendError as error:
+            if not isinstance(error.__cause__, errors.MessageNotModifiedError):
+                raise
+            result = None
+        for update in getattr(result, "updates", ()):
+            if isinstance(update, types.UpdateMessageReactions) and update.msg_id == message_id:
+                if not update.reactions.min:
+                    return await self._reactions(update.reactions)
+        raw = await self._call(client.get_messages(chat_id, ids=message_id))
+        return await self._reactions(raw.reactions if raw else None)
+
+    async def _reactions(self, raw: Any) -> tuple[Reaction, ...]:
+        found = convert.reactions(raw, self._custom)
+        await self._learn_emoji(found)
+        return self._labelled(found)
+
+    async def refresh_reactions(self, chat_id: int, ids: list[int]) -> None:
+        peer = await self._peer(chat_id)
+        request = functions.messages.GetMessagesReactionsRequest(peer, ids)
+        result = await self._call(self._need_client()(request))
+        for update in getattr(result, "updates", ()):
+            if isinstance(update, types.UpdateMessageReactions):
+                await self._reactions_changed(update)
+
+    async def _reactions_changed(self, update: Any) -> None:
+        chat_id = utils.get_peer_id(update.peer)
+        reactions = await self._reactions(update.reactions)
+        self._emit(
+            ReactionsChanged(chat_id, update.msg_id, reactions, bool(update.reactions.min))
+        )
+
+    async def typing(self, chat_id: int) -> None:
+        peer = await self._peer(chat_id)
+        request = functions.messages.SetTypingRequest(peer, types.SendMessageTypingAction())
+        await self._call(self._need_client()(request))
+
+    def _someone_typing(self, chat_id: int, user_id: int, update: Any) -> None:
+        what = convert.doing(update.action)
+        if what is not None and user_id != self._me:
+            known = getattr(update, "_entities", None) or {}
+            self._emit(Typing(chat_id, user_id, what, convert.name_of(known.get(user_id))))
 
     # -- files ---------------------------------------------------------------
 
@@ -759,7 +937,7 @@ class TelegramBackend:
             log.info("sender unavailable: %s", type(error).__name__)
         self._remember(event.chat_id, [event.message])
         message = convert.message(event.message, event.chat_id)
-        if message.reply:
+        if message.reply or message.reactions:
             (message,) = await self._with_replies(event.chat_id, [message])
         return message
 
@@ -768,6 +946,16 @@ class TelegramBackend:
 
     async def _on_raw(self, update: Any) -> None:
         match update:
+            case types.UpdateMessageReactions():
+                await self._reactions_changed(update)
+            case types.UpdateUserTyping():
+                self._someone_typing(update.user_id, update.user_id, update)
+            case types.UpdateChatUserTyping():
+                chat_id = utils.get_peer_id(types.PeerChat(update.chat_id))
+                self._someone_typing(chat_id, utils.get_peer_id(update.from_id), update)
+            case types.UpdateChannelUserTyping():
+                chat_id = utils.get_peer_id(types.PeerChannel(update.channel_id))
+                self._someone_typing(chat_id, utils.get_peer_id(update.from_id), update)
             case types.UpdateReadHistoryInbox():
                 chat_id = utils.get_peer_id(update.peer)
                 self._emit(InboxRead(chat_id, update.max_id, update.still_unread_count))
@@ -815,6 +1003,11 @@ class TelegramBackend:
         self._client = None
         remove_session(self._path)
         self._set_link(Link.OFFLINE)
+
+
+def _as_results(some: Iterable[Any]) -> Any:
+    counts = [types.ReactionCount(reaction, 1) for reaction in some]
+    return types.MessageReactions(counts)
 
 
 def _input_media(uploaded: Uploaded) -> Any:

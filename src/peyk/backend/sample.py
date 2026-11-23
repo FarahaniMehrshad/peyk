@@ -6,12 +6,49 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 from peyk.backend import sample_files
-from peyk.models import FOREVER, Chat, Folder, Kind, Media, Message, Reply, Span
+from peyk.models import (
+    FOREVER,
+    Chat,
+    Folder,
+    Kind,
+    Media,
+    Message,
+    Reaction,
+    ReactionChoice,
+    Reply,
+    Span,
+)
+from peyk.text.format import emoji
 
 ME = 1
 SARA, BOT, GROUP, NEWS, LONG, HEBREW, MUTED, OLD = 10, 11, -20, -1_000_000_000_030, -21, 12, 13, 14
 BIG = -1_000_000_000_040
 PHOTOS = -22
+_REACTIONS = (
+    ("❤", "Red Heart"), ("👍", "Thumbs Up"), ("🔥", "Fire"), ("😁", "Beaming Face"),
+    ("🎉", "Party Popper"), ("👏", "Clapping Hands"), ("😢", "Crying Face"),
+    ("🤔", "Thinking Face"), ("🙏", "Folded Hands"), ("👎", "Thumbs Down"), ("🥰", "Loving Face"),
+    ("🤯", "Exploding Head"), ("😱", "Screaming Face"), ("🤬", "Cursing Face"),
+    ("🤩", "Star-Struck"), ("💩", "Pile of Poo"), ("👌", "Ok Hand"), ("🕊", "Dove"),
+    ("🤡", "Clown Face"), ("🥱", "Yawning Face"), ("🥴", "Woozy Face"), ("😍", "Heart Eyes"),
+    ("🐳", "Whale"), ("❤\u200d🔥", "Heart on Fire"), ("🌚", "New Moon"), ("🌭", "Hot Dog"),
+    ("💯", "Hundred Points"), ("🤣", "Rolling on the Floor"), ("⚡", "High Voltage"),
+    ("🍌", "Banana"), ("🏆", "Trophy"), ("💔", "Broken Heart"), ("🤨", "Raised Eyebrow"),
+    ("😐", "Neutral Face"), ("🍓", "Strawberry"), ("🍾", "Champagne"), ("💋", "Kiss Mark"),
+    ("😈", "Smiling Devil"), ("😴", "Sleeping Face"), ("😭", "Loudly Crying"),
+    ("🤓", "Nerd Face"), ("👻", "Ghost"), ("👨\u200d💻", "Technologist"), ("👀", "Eyes"),
+    ("🎃", "Pumpkin"), ("🙈", "See-No-Evil"), ("😇", "Halo"), ("🤝", "Handshake"),
+    ("✍", "Writing Hand"), ("🤗", "Hugging Face"), ("☃", "Snowman"), ("💅", "Nail Polish"),
+    ("🗿", "Moai"), ("🆒", "Cool"), ("🦄", "Unicorn"), ("💊", "Pill"),
+    ("🤷\u200d♂", "Man Shrugging"), ("😡", "Pouting Face"),
+)  # fmt: skip
+REACTIONS = tuple(ReactionChoice(key, emoji(key), name) for key, name in _REACTIONS)
+
+
+def reacted(*given: tuple[str, int, bool]) -> tuple[Reaction, ...]:
+    return tuple(Reaction(key, emoji(key), count, mine) for key, count, mine in given)
+
+
 _LOCKED = "This chat does not allow saving files."
 
 
@@ -77,7 +114,7 @@ def build(now: datetime | None = None) -> tuple[list[Chat], dict[int, list[Messa
     question = w.messages[-1]
     w.say(me, "عالیه 👍🏽 لطفا کتاب Python را هم بیاور (نسخهٔ 2026).",
           reply=Reply(question.id, sara[1], question.text))  # fmt: skip
-    w.say(sara, "", media=_photo(1, 1280, 960))
+    w.say(sara, "", media=_photo(1, 1280, 960), reactions=reacted(("❤", 1, True)))
     link = "این را ببین: https://example.com/books و @mina هم می\u200cآید"
     w.say(sara, link, spans=(_span(link, "https://example.com/books", "link"),
                              _span(link, "@mina", "mention")))  # fmt: skip
@@ -87,7 +124,8 @@ def build(now: datetime | None = None) -> tuple[list[Chat], dict[int, list[Messa
 
     w = _Writer(GROUP, now - minute, 3 * minute)
     w.say(reza, "created the group", service=True)
-    w.say(reza, "Hey everyone, the build is green again.")
+    w.say(reza, "Hey everyone, the build is green again.",
+          reactions=reacted(("🎉", 3, False), ("👍", 2, True), ("❤\u200d🔥", 1, False)))
     code = "Run this first:\nuv sync\nuv run pytest"
     w.say(reza, code, spans=(_span(code, "uv sync\nuv run pytest", "pre"),))
     styled = "This is bold, italic, struck, code and a secret."
@@ -96,7 +134,8 @@ def build(now: datetime | None = None) -> tuple[list[Chat], dict[int, list[Messa
         _span(styled, "struck", "strike"), _span(styled, "code", "code"),
         _span(styled, "a secret", "spoiler"),
     ), edited=True)  # fmt: skip
-    w.say(ali, "سلام بچه\u200cها، جلسهٔ امروز ساعت ۱۷ است. لطفا همه باشید!")
+    w.say(ali, "سلام بچه\u200cها، جلسهٔ امروز ساعت ۱۷ است. لطفا همه باشید!",
+          reactions=reacted(("👌", 2, False)))
     w.say(me, "I'll be there.")
     w.say(me, "Can someone share the notes?")
     w.say(mina, "Sure", reply=Reply(w.messages[-1].id, "You", "Can someone share the notes?"))
@@ -110,7 +149,8 @@ def build(now: datetime | None = None) -> tuple[list[Chat], dict[int, list[Messa
     w = _Writer(NEWS, now - 40 * minute, 60 * minute)
     news = (0, "Peyk News")
     for i in range(1, 26):
-        w.say(news, f"Update {i}: the terminal is a fine place to read.")
+        w.say(news, f"Update {i}: the terminal is a fine place to read.",
+              reactions=reacted(("👍", 1200 + i, False), ("🔥", 48, i == 25), ("🤔", 7, False)))
     w.say(news, "نسخهٔ تازه منتشر شد. جزئیات بیشتر به\u200cزودی اعلام می\u200cشود.")
     news_messages = w.finish()
 

@@ -6,7 +6,7 @@ from driver import OFFLINE, run
 from peyk.backend import sample
 from peyk.backend.base import BackendError, ErrorKind, MessagesRemoved
 from peyk.backend.fake import FakeBackend
-from peyk.ui.keymap import DEFAULT_KEYS
+from peyk.keys import DEFAULT_KEYS
 from peyk.ui.screens import finder as finder_module
 from peyk.ui.screens.command import COMMANDS, find
 from peyk.ui.screens.finder import ChatFinder, MessageFinder, SenderFinder

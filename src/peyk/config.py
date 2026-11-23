@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import textwrap
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-TEMPLATE = """\
+from peyk.keys import DEFAULT_KEYS, KeyProblem, resolve
+
+_ACTIONS = textwrap.fill(", ".join(DEFAULT_KEYS), 88, initial_indent="#   ",
+                         subsequent_indent="#   ")  # fmt: skip
+TEMPLATE = f"""\
 # Peyk configuration. Delete any line to get its default back.
 
 [network]
@@ -46,10 +51,22 @@ inline = true
 folder = ""
 
 [notifications]
+# Windows notifications for new messages, except in muted chats
 enabled = true
+# Without it, they say who wrote but not what
 show_content = true
 
+[privacy]
+# Let others see when you are typing
+typing = true
+
 [keys]
+# action = "key", as printed on a US keyboard, for example:
+#   react = "-"
+#   find_chat = "ctrl+f"
+#   logout = ""            no key
+# The actions are:
+{_ACTIONS}
 """
 
 
@@ -69,7 +86,8 @@ class Config:
     folder: str = ""
     notifications: bool = True
     show_content: bool = True
-    keys: dict[str, str] = field(default_factory=dict)
+    show_typing: bool = True
+    keys: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_KEYS))
 
 
 _CHOICES = {
@@ -89,6 +107,7 @@ _FIELDS: dict[tuple[str, str], tuple[str, type]] = {
     ("files", "folder"): ("folder", str),
     ("notifications", "enabled"): ("notifications", bool),
     ("notifications", "show_content"): ("show_content", bool),
+    ("privacy", "typing"): ("show_typing", bool),
 }
 
 
@@ -107,7 +126,10 @@ def parse(text: str) -> Config:
             bad = [k for k, v in table.items() if not isinstance(v, str)]
             if bad:
                 raise ConfigError(f"[keys] {bad[0]} must be a string")
-            values["keys"] = dict(table)
+            try:
+                values["keys"] = resolve(table)
+            except KeyProblem as problem:
+                raise ConfigError(f"[keys] {problem}") from problem
             continue
         for key, value in table.items():
             if (section, key) not in _FIELDS:

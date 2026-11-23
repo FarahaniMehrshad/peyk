@@ -64,6 +64,7 @@ class Conversation(Widget):
     COMPONENT_CLASSES = {
         "msg--selected", "msg--bar", "msg--dim", "msg--me", "msg--reply", "msg--media",
         "msg--service", "msg--separator", "msg--unread", "msg--ticks",
+        "msg--reaction", "msg--reaction-mine",
         "msg--trouble", "msg--code", "msg--link", "msg--mention", "msg--spoiler", "msg--quote",
         *(f"msg--sender-{i}" for i in range(SENDER_COLOURS)),
     }  # fmt: skip
@@ -79,6 +80,8 @@ class Conversation(Widget):
     Conversation > .msg--separator { color: $text-muted; }
     Conversation > .msg--unread { color: $warning; }
     Conversation > .msg--ticks { color: $success; }
+    Conversation > .msg--reaction { color: $text-muted; }
+    Conversation > .msg--reaction-mine { color: $primary; text-style: bold; }
     Conversation > .msg--trouble { color: $error; }
     Conversation > .msg--code { color: $warning; }
     Conversation > .msg--link { color: $accent; text-style: underline; }
@@ -134,6 +137,7 @@ class Conversation(Widget):
         self.selected: int | None = None
         self.lines_up = 0
         self.note = ""
+        self.failed_hints = ""  # what can be done about a message that was not sent
         self.unread_from = 0  # show the "unread" line before the first message above this id
         self._blocks: list[Block] = []
         self._starts: list[int] = []
@@ -371,10 +375,11 @@ class Conversation(Widget):
             body.extend(self._text_lines(message, room, selected))
         if not body:
             simple("(empty message)", "dim")
+        body.extend(self._reaction_lines(message, room))
         if message.trouble:
             simple(message.trouble, "trouble")
             if selected and message.state is State.FAILED:
-                simple("Enter: try again    e: back to writing    d: discard", "dim")
+                simple(self.failed_hints, "dim")
 
         place: Place | None = None
         for i, (pieces, cells, rtl) in enumerate(body):
@@ -404,6 +409,30 @@ class Conversation(Widget):
         return [
             ([(s.text, s.cell_length, s.style) for s in row], box.cols, False) for row in blocks
         ]
+
+    def _reaction_lines(self, message: Message, room: int):
+        assert self.chat
+        alone = self.chat.kind in (Kind.USER, Kind.BOT, Kind.SAVED)
+        lines: list[tuple[list[tuple[str, int, Style | None]], int, bool]] = []
+        pieces: list[tuple[str, int, Style | None]] = []
+        used = 0
+        for reaction in message.reactions:
+            label, cells = self._options.fit(reaction.label, 8)
+            if reaction.count > 1 or not alone:
+                number = f" {fmt.count(reaction.count)}"
+                label, cells = label + number, cells + len(number)
+            if pieces and used + 2 + cells > room:
+                lines.append((pieces, used, False))
+                pieces, used = [], 0
+            if pieces:
+                pieces.append(("  ", 2, None))
+                used += 2
+            style = self._style("reaction-mine" if reaction.mine else "reaction")
+            pieces.append((label, cells, style))
+            used += cells
+        if pieces:
+            lines.append((pieces, used, False))
+        return lines
 
     def _add_side(self, row: Row, message: Message, read: bool) -> None:
         ticks = ""
@@ -485,7 +514,7 @@ class Conversation(Widget):
     def render_line(self, y: int) -> Strip:
         width, height = self.size.width, self.size.height
         if self.note:
-            if y == height - 1 or (not self._blocks and y == 0):
+            if y == (height - 1 if self._blocks else 0):
                 row = Row(width, self.rich_style)
                 text, cells = self._options.fit(self.note, width - GUTTER)
                 return row.space(GUTTER).add(text, cells, self._style("unread")).strip()
@@ -636,7 +665,10 @@ class Conversation(Widget):
         if current is None or current not in visible:
             choice = (visible or messages)[-1 if step < 0 or self.lines_up == 0 else 0]
             self._select(choice.id)
-            self._after_move()
+            if len(choice.lines) < self.size.height:
+                self._reveal(choice.id)
+            else:
+                self._after_move()
             return
         top, end = self._view
         hidden_below = current.start + len(current.lines) - end
@@ -680,6 +712,9 @@ class Conversation(Widget):
                     break
         self._clamp()
         self._repaint()
+
+    def visible_ids(self) -> list[int]:
+        return [b.id for b in self._visible_messages() if b.id < FIRST_ID]
 
     def last_visible_id(self) -> int:
         """Newest message whose last line is on screen."""

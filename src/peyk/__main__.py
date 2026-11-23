@@ -61,8 +61,10 @@ def main(argv: list[str] | None = None) -> int:
 
     from peyk import logs
     from peyk.backend.telegram import TelegramBackend
+    from peyk.platform.notify import Toaster
 
     lock = InstanceLock(paths.lock)
+    notifier = Toaster() if config.notifications else None
     try:
         lock.acquire()
     except AlreadyRunning:
@@ -70,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         logs.setup(paths.log)
+        if notifier:
+            notifier.start()
         PeykApp(
             config,
             paths,
@@ -78,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             graphics=pictures,
             palette=colours,
+            notifier=notifier,
         ).run()
     finally:
         lock.release()

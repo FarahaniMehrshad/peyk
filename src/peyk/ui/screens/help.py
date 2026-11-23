@@ -9,7 +9,8 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-from peyk.ui.keymap import pressed
+from peyk.keys import hints, pretty
+from peyk.ui.keymap import action_for, pressed
 from peyk.ui.screens.command import COMMANDS
 
 # (key or keys bound to an action, or fixed text) and what it does. An action name
@@ -29,6 +30,7 @@ SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("{edit}", "edit the selected message, or your last one"),
         ("{delete}", "delete the selected message"),
         ("{copy}", "copy the selected message"),
+        ("{react}", "react to the selected message, or take it back"),
         ("{deselect}", "stop writing, then cancel the reply or edit"),
     )),
     ("Files", (
@@ -69,7 +71,7 @@ def help_text(keys: dict[str, str]) -> Text:
         text.append(f"{title}\n", "bold")
         for shown, meaning in rows:
             for action, key in keys.items():
-                shown = shown.replace("{" + action + "}", _pretty(key))
+                shown = shown.replace("{" + action + "}", pretty(key) or "-")
             text.append(f"  {shown:<24}", "cyan")
             text.append(f" {meaning}\n")
         text.append("\n")
@@ -81,14 +83,6 @@ def help_text(keys: dict[str, str]) -> Text:
     return text
 
 
-def _pretty(key: str) -> str:
-    if len(key) == 1:
-        return key
-    if key == "escape":
-        return "Esc"
-    return "+".join(part.capitalize() for part in key.split("+"))
-
-
 class HelpScreen(ModalScreen[None]):
     def __init__(self, keys: dict[str, str]) -> None:
         super().__init__()
@@ -98,7 +92,12 @@ class HelpScreen(ModalScreen[None]):
         with Vertical(classes="frame"), Vertical(classes="finder"):
             with VerticalScroll(id="help"):
                 yield Static(help_text(self._keys))
-            yield Static("j/k: scroll    Esc: close", markup=False, classes="finder-hints")
+            scroll = hints(self._keys, ("down up", "scroll"))
+            yield Static(
+                f"{scroll}  Esc close  Change keys in config.toml, under [keys]".strip(),
+                markup=False,
+                classes="finder-hints",
+            )
 
     def on_mount(self) -> None:
         self.query_one(".finder").border_title = "Keys"
@@ -106,22 +105,27 @@ class HelpScreen(ModalScreen[None]):
     def on_key(self, event: events.Key) -> None:
         page = self.query_one("#help", VerticalScroll)
         key = pressed(event)
-        match key:
-            case "j" | "down":
-                page.scroll_relative(y=1, animate=False)
-            case "k" | "up":
-                page.scroll_relative(y=-1, animate=False)
-            case "J" | "pagedown" | "space" | " ":
-                page.scroll_relative(y=10, animate=False)
-            case "K" | "pageup":
-                page.scroll_relative(y=-10, animate=False)
-            case "G" | "end":
-                page.scroll_end(animate=False)
-            case "home":
-                page.scroll_home(animate=False)
-            case "escape" | "q" | "enter" | "f1":
-                self.dismiss(None)
-            case _:
-                return
+        if key in ("escape", "q", "enter"):
+            self.dismiss(None)
+        elif key == " ":
+            page.scroll_relative(y=10, animate=False)
+        elif key == "home":
+            page.scroll_home(animate=False)
+        else:
+            match action_for(event, self._keys):
+                case "down":
+                    page.scroll_relative(y=1, animate=False)
+                case "up":
+                    page.scroll_relative(y=-1, animate=False)
+                case "page_down":
+                    page.scroll_relative(y=10, animate=False)
+                case "page_up":
+                    page.scroll_relative(y=-10, animate=False)
+                case "newest":
+                    page.scroll_end(animate=False)
+                case "help" | "quit" | "deselect":
+                    self.dismiss(None)
+                case _:
+                    return
         event.stop()
         event.prevent_default()

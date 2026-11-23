@@ -36,7 +36,7 @@ def test_demo_load_writes_nothing(home):
 
 def test_values_are_read():
     parsed = config.parse('[text]\nrtl = "off"\n[notifications]\nenabled = false\n[keys]\nquit="Q"')
-    assert parsed.rtl == "off" and not parsed.notifications and parsed.keys == {"quit": "Q"}
+    assert parsed.rtl == "off" and not parsed.notifications and parsed.keys["quit"] == "Q"
 
 
 def test_notepad_byte_order_mark_is_accepted(home):

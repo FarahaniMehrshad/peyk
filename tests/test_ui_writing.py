@@ -291,7 +291,7 @@ async def test_refused_message_can_be_retried_edited_or_discarded():
         assert "You cannot write in this chat." in d.text()
         await d.press("escape", "k")
         assert d.talk.selected_message.state is State.FAILED
-        assert "Enter: try again" in d.text()
+        assert "Enter try again" in d.text()
         await d.press("enter")  # fails again
         assert d.screen.outbox.unsent == 1
         await d.press("k", "r")

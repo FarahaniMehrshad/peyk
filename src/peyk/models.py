@@ -65,6 +65,27 @@ class Attachment:
 
 
 @dataclass(frozen=True, slots=True)
+class Reaction:
+    key: str  # the emoji, "custom:" and its id, or "paid"
+    label: str  # what to show
+    count: int = 1
+    mine: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ReactionChoice:
+    key: str
+    label: str
+    name: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ReactionMenu:
+    choices: tuple[ReactionChoice, ...] = ()
+    most: int = 1  # how many reactions we may give one message
+
+
+@dataclass(frozen=True, slots=True)
 class Reply:
     id: int
     name: str = ""
@@ -94,6 +115,9 @@ class Message:
     edited: bool = False
     service: bool = False  # `text` describes an event, e.g. "Sara joined"
     mentioned: bool = False
+    silent: bool = False  # sent without sound
+    reactions: tuple[Reaction, ...] = ()
+    reactions_shared: bool = False  # sent to everybody alike, so `mine` is not known
     state: State = State.SENT
     trouble: str = ""  # why it is not sent
 

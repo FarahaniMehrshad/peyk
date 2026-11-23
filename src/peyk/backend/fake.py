@@ -22,10 +22,25 @@ from peyk.backend.base import (
     LinkListener,
     MessageAdded,
     Progress,
+    ReactionsChanged,
+    Typing,
     Unsubscribe,
 )
 from peyk.files import Source
-from peyk.models import Attachment, Chat, Folder, Found, Kind, Media, Message, Reply, Span, User
+from peyk.models import (
+    Attachment,
+    Chat,
+    Folder,
+    Found,
+    Kind,
+    Media,
+    Message,
+    Reaction,
+    ReactionMenu,
+    Reply,
+    Span,
+    User,
+)
 from peyk.text import format as fmt
 from peyk.text import markup
 from peyk.text.match import fold, score
@@ -71,6 +86,7 @@ class FakeBackend:
         self.lose_next_reply = False  # the message arrives but we never hear of it
         self.sent_files: dict[int, bytes] = {}
         self._file_ids = count(9000)
+        self.menus: dict[int, ReactionMenu] = {}  # where they differ from the usual
 
     def fail(self, method: str, *failures: Exception) -> None:
         """Make the next calls to `method` raise."""
@@ -288,6 +304,40 @@ class FakeBackend:
         await self._pretend(len(data), progress)
         sink.write(data)
 
+    # -- reactions and typing
+
+    async def reaction_menu(self, chat_id: int) -> ReactionMenu:
+        await self._step("reaction_menu", str(chat_id))
+        return self.menus.get(chat_id, ReactionMenu(sample.REACTIONS))
+
+    async def react(
+        self, chat_id: int, message_id: int, keys: tuple[str, ...]
+    ) -> tuple[Reaction, ...]:
+        await self._step("react", f"{chat_id}:{message_id}:{','.join(keys)}")
+        message = self._find(chat_id, message_id)
+        if message is None:
+            raise BackendError(ErrorKind.REFUSED, "That message no longer exists.")
+        others = {r.key: r.count - r.mine for r in message.reactions}
+        counts = others | {key: others.get(key, 0) + 1 for key in keys}
+        given = sample.reacted(*((k, n, k in keys) for k, n in counts.items() if n))
+        self.set_reactions(message, given)
+        return given
+
+    def set_reactions(self, message: Message, reactions: tuple[Reaction, ...]) -> None:
+        messages = self.messages[message.chat_id]
+        index = next(i for i, m in enumerate(messages) if m.id == message.id)
+        messages[index] = replace(messages[index], reactions=reactions)
+
+    async def refresh_reactions(self, chat_id: int, ids: list[int]) -> None:
+        await self._step("refresh_reactions", f"{chat_id}:{','.join(map(str, ids))}")
+        for message_id in ids:
+            message = self._find(chat_id, message_id)
+            if message:
+                self.emit(ReactionsChanged(chat_id, message_id, message.reactions))
+
+    async def typing(self, chat_id: int) -> None:
+        await self._step("typing", str(chat_id))
+
     # -- searching
 
     async def find_chats(self, query: str) -> list[Chat]:
@@ -354,10 +404,21 @@ class FakeBackend:
     async def _talk(self) -> None:
         turn = 0
         while True:
-            await asyncio.sleep(self.chatter)
+            await asyncio.sleep(self.chatter / 2)
             chat_id, sender_id, sender, text = _CHATTER[turn % len(_CHATTER)]
+            self.emit(Typing(chat_id, sender_id, "typing", sender))
+            await asyncio.sleep(self.chatter / 2)
             self.receive(chat_id, text, sender_id, sender)
+            self._cheer()
             turn += 1
+
+    def _cheer(self) -> None:
+        """Someone likes our last message in the group."""
+        ours = [m for m in self.messages[sample.GROUP] if m.outgoing]
+        if ours and not ours[-1].reactions:
+            given = sample.reacted(("🔥", 1, False))
+            self.set_reactions(ours[-1], given)
+            self.emit(ReactionsChanged(sample.GROUP, ours[-1].id, given))
 
     async def log_out(self) -> None:
         await self._step("log_out")

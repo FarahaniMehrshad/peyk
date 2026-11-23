@@ -7,7 +7,17 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, BinaryIO, Protocol
 
-from peyk.models import Attachment, Chat, Folder, Found, Message, Span, User
+from peyk.models import (
+    Attachment,
+    Chat,
+    Folder,
+    Found,
+    Message,
+    Reaction,
+    ReactionMenu,
+    Span,
+    User,
+)
 
 
 class AuthStep(Enum):
@@ -76,6 +86,24 @@ class MessagesRemoved:
 
 
 @dataclass(frozen=True, slots=True)
+class ReactionsChanged:
+    chat_id: int
+    message_id: int
+    reactions: tuple[Reaction, ...]
+    shared: bool = False  # as in Message.reactions_shared
+
+
+@dataclass(frozen=True, slots=True)
+class Typing:
+    """Someone is typing, or whatever `what` says. Empty: no longer."""
+
+    chat_id: int
+    user_id: int
+    what: str = "typing"
+    name: str = ""  # if known
+
+
+@dataclass(frozen=True, slots=True)
 class InboxRead:
     chat_id: int
     up_to: int
@@ -112,6 +140,8 @@ Event = (
     MessageAdded
     | MessageChanged
     | MessagesRemoved
+    | ReactionsChanged
+    | Typing
     | InboxRead
     | OutboxRead
     | ChatFlags
@@ -201,6 +231,22 @@ class Backend(Protocol):
         ...
 
     async def delete(self, chat_id: int, ids: list[int], for_everyone: bool) -> None: ...
+
+    async def reaction_menu(self, chat_id: int) -> ReactionMenu: ...
+
+    async def react(
+        self, chat_id: int, message_id: int, keys: tuple[str, ...]
+    ) -> tuple[Reaction, ...]:
+        """Make these our reactions to the message. Returns everyone's."""
+        ...
+
+    async def refresh_reactions(self, chat_id: int, ids: list[int]) -> None:
+        """Ask for what may have changed; it arrives as events."""
+        ...
+
+    async def typing(self, chat_id: int) -> None:
+        """Tell them that we are typing. It lasts for a few seconds."""
+        ...
 
     async def find_chats(self, query: str) -> list[Chat]:
         """Contacts and chats the user knows, whether or not they are in the list."""

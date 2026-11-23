@@ -20,7 +20,7 @@ ROWS = 2
 class ChatList(Widget):
     COMPONENT_CLASSES = {
         "chatlist--selected", "chatlist--open", "chatlist--title", "chatlist--dim",
-        "chatlist--badge", "chatlist--badge-muted", "chatlist--mention",
+        "chatlist--badge", "chatlist--badge-muted", "chatlist--mention", "chatlist--doing",
     }  # fmt: skip
     DEFAULT_CSS = """
     ChatList { height: 1fr; }
@@ -30,6 +30,7 @@ class ChatList(Widget):
     ChatList > .chatlist--dim { color: $text-muted; }
     ChatList > .chatlist--badge { color: $on-primary; background: $primary; }
     ChatList > .chatlist--badge-muted { color: $text-muted; }
+    ChatList > .chatlist--doing { color: $accent; }
     ChatList > .chatlist--mention { color: $warning; text-style: bold; }
     """
 
@@ -45,6 +46,7 @@ class ChatList(Widget):
         self.selected: int | None = None  # chat id, so reordering keeps it
         self.open_chat: int | None = None
         self.empty_text = "Loading chats..."
+        self.doing: dict[int, list[str]] = {}  # what is being typed, by chat
         self._top = 0
 
     # -- state
@@ -56,6 +58,11 @@ class ChatList(Widget):
             self.selected = chats[min(old or 0, len(chats) - 1)].id
         self._keep_visible()
         self.refresh()
+
+    def show_doing(self, doing: dict[int, list[str]]) -> None:
+        if doing != self.doing:
+            self.doing = doing
+            self.refresh()
 
     def _index(self) -> int | None:
         return next((i for i, c in enumerate(self.chats) if c.id == self.selected), None)
@@ -137,10 +144,17 @@ class ChatList(Widget):
             badge = " • "
         mention = "@ " if chat.mentions else ""
         room = row.left - len(badge) - len(mention) - 2
-        text, cells = self._options.fit(
-            fmt.preview(chat.last, chat) if chat.last else "", room
-        )
-        row.add(text, cells, self._style("dim"))
+        doing = self.doing.get(chat.id)
+        if doing:
+            end = row.used + room
+            for piece in doing:
+                text, cells = self._options.fit(piece, end - row.used)
+                row.add(text, cells, self._style("doing"))
+        else:
+            text, cells = self._options.fit(
+                fmt.preview(chat.last, chat) if chat.last else "", room
+            )
+            row.add(text, cells, self._style("dim"))
         row.space(row.left - len(badge) - len(mention) - 1)
         row.add(mention, len(mention), self._style("mention"))
         muted = chat.muted(time.time())

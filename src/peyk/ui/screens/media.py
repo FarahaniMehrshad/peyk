@@ -89,7 +89,9 @@ class MediaActions(_Base):
             self._flash(locked or "There is no picture in this message.")
             return
         self.app.push_screen(
-            ViewerScreen(self.gallery, self._options, shown, shown.index(selected)),
+            ViewerScreen(
+                self.gallery, self._options, shown, shown.index(selected), self._keys
+            ),
             lambda message: self._open_media(message) if message else None,
         )
 

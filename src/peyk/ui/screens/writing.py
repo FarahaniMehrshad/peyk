@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from textual import on
 
 from peyk.backend.base import BackendError, MessageAdded, MessageChanged, MessagesRemoved
+from peyk.keys import hints, pretty
 from peyk.models import Attachment, Chat, Kind, Message, Reply, State
 from peyk.outbox import FIRST_ID
 from peyk.platform import clipboard
@@ -17,6 +18,7 @@ from peyk.text import format as fmt
 from peyk.text import markup
 from peyk.text.sanitize import sanitize_line
 from peyk.ui.screens.confirm import Answer, ChoiceScreen
+from peyk.ui.widgets.divider import Divider
 from peyk.ui.widgets.edit_box import EditBox
 
 if TYPE_CHECKING:
@@ -109,7 +111,8 @@ class Writing(_Base):
     def _show_draft(self) -> None:
         """Make the box match the open chat."""
         box, chat = self.box, self._chat
-        box.display = chat is not None
+        box.display = self.query_one(Divider).display = chat is not None
+        self._show_typing()
         if chat is None:
             return
         box.can_focus = chat.can_write
@@ -143,17 +146,19 @@ class Writing(_Base):
         if chat and not chat.can_write:
             box.set_placeholder("You cannot write in this chat.")
         else:
-            key = self._keys["write"]
+            key = pretty(self._keys["write"])
             invitation = "Write a caption, or just press Enter" if draft.attachment else (
                 "Write a message"
             )
-            box.set_placeholder(invitation if box.has_focus else f"{key}: write a message")
+            waiting = f"{key}: write a message" if key else "Write a message"
+            box.set_placeholder(invitation if box.has_focus else waiting)
 
     @on(EditBox.Changed, "#compose")
     def _draft_changed(self) -> None:
         if self.active is not None:
             self.draft.text = self.box.text
             self._show_header()
+            self._tell_typing()
 
     @on(EditBox.Left, "#compose")
     def _stop_writing(self) -> None:
@@ -198,6 +203,7 @@ class Writing(_Base):
         typed, reply, attachment = draft.text, draft.reply, draft.attachment
         draft.text, draft.reply, draft.attachment = "", None, None
         self._show_draft()
+        self._told_typing.pop(self.active, None)
         self.outbox.add(self.active, parsed.text, parsed.spans, reply, me, typed, attachment)
         self.do_newest()
 
@@ -292,7 +298,7 @@ class Writing(_Base):
             return
         message = self.store.history(self.active).get(draft.edit_id)
         if not draft.text.strip() and not (message and message.media):
-            self._flash(f"An empty message cannot be saved. {self._keys['delete']} deletes it.")
+            self._flash("An empty message cannot be saved. Delete it instead.")
             return
         if markup.utf16_length(draft.text) > MAX_LENGTH:
             self._flash("Too long.")
@@ -391,12 +397,9 @@ class Writing(_Base):
     def _selected_or_complain(self, what: str) -> Message | None:
         message = self.conversation.selected_message if self.active is not None else None
         if message is None:
-            self._flash(f"Select a message to {what} first ({self._move_keys}).")
+            how = hints(self._keys, ("down up", "select"))
+            self._flash(f"Select a message to {what} first" + (f": {how}." if how else "."))
         return message
-
-    @property
-    def _move_keys(self) -> str:
-        return f"{self._keys['down']}/{self._keys['up']}"
 
     def _can_write_here(self) -> bool:
         chat = self._chat

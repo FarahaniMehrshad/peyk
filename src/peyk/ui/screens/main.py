@@ -24,18 +24,24 @@ from peyk.backend.base import (
 )
 from peyk.config import Config
 from peyk.files import default_folder
+from peyk.keys import hints, pretty
 from peyk.models import Chat, State, User
 from peyk.outbox import Outbox
+from peyk.platform import notify
 from peyk.platform.graphics import Graphics
+from peyk.platform.notify import Notifier
 from peyk.store import ALL, Change, Store
+from peyk.ui.alerts import Alerts
 from peyk.ui.gallery import Gallery
-from peyk.ui.keymap import DEFAULT_KEYS, action_for, pressed
+from peyk.ui.keymap import action_for, pressed
 from peyk.ui.screens.confirm import ConfirmScreen
+from peyk.ui.screens.extras import LOOK_EVERY, Extras
 from peyk.ui.screens.finding import Finding
 from peyk.ui.screens.media import MediaActions
 from peyk.ui.screens.writing import Draft, Writing
 from peyk.ui.widgets.chat_list import ChatList
 from peyk.ui.widgets.conversation import Conversation
+from peyk.ui.widgets.divider import Divider
 from peyk.ui.widgets.edit_box import EditBox
 from peyk.ui.widgets.status import StatusBar
 from peyk.ui.widgets.strips import TextOptions
@@ -49,12 +55,18 @@ NARROW = 70
 READ_DELAY = 0.8
 NOTICE_TIME = 6
 MAX_BOX_ROWS = 8
-_LIST_HINTS = "j/k move  Enter open  0-9 folder  / find  F1 keys  q quit"
-_CHAT_HINTS = "j/k select  i write  r reply  o open  p picture  a attach  F1 keys"
+_LIST_HINTS = (
+    ("down up", "move"), ("open", "open"), ("find_chat", "find"), ("help", "keys"),
+    ("quit", "quit"),
+)  # fmt: skip
+_CHAT_HINTS = (
+    ("down up", "select"), ("write", "write"), ("reply", "reply"), ("react", "react"),
+    ("open_media", "open"), ("attach", "attach"), ("help", "keys"),
+)  # fmt: skip
 _WRITE_HINTS = "Enter send  Ctrl+Enter new line  Esc done"
 
 
-class MainScreen(Writing, Finding, MediaActions):
+class MainScreen(Writing, Finding, MediaActions, Extras):
     AUTO_FOCUS = ""
     PAGE = PAGE
 
@@ -66,13 +78,14 @@ class MainScreen(Writing, Finding, MediaActions):
         backend: Backend,
         config: Config | None = None,
         graphics: Graphics | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         super().__init__()
         config = config or Config()
         self._backend = backend
         self._options = TextOptions(config.rtl, config.lam_alef)  # type: ignore[arg-type]
         self._formatting = config.formatting
-        self._keys = dict(DEFAULT_KEYS)
+        self._keys = config.keys
         self._me: User | None = None
         self._drafts: dict[int, Draft] = {}
         self.store = Store()
@@ -98,6 +111,16 @@ class MainScreen(Writing, Finding, MediaActions):
         self._progress_shown = 0.0
         self._downloads: dict[tuple[int, int], Worker] = {}
         self._last_folder: Path | None = None
+        self._show_typing_to_others = config.show_typing
+        self._told_typing: dict[int, float] = {}  # when, by chat
+        self._typing_timer: Timer | None = None
+        self._alerts: Alerts | None = None
+        self._window = 0  # of the terminal
+        if notifier and config.notifications:
+            notifier.on_click = self._notice_clicked_somewhere
+            self._alerts = Alerts(
+                notifier, self.store, self.set_timer, self._in_view, config.show_content
+            )
         self.folder = ALL
         self.open_chats: list[int] = []
         self.active: int | None = None
@@ -121,6 +144,7 @@ class MainScreen(Writing, Finding, MediaActions):
                 yield Conversation(
                     self._options, id="messages", gallery=self.gallery if self._inline else None
                 )
+                yield Divider(self._options)
                 yield EditBox(self._options, id="compose", max_rows=MAX_BOX_ROWS)
         yield StatusBar()
 
@@ -140,8 +164,14 @@ class MainScreen(Writing, Finding, MediaActions):
         self._was_online = self._backend.link is Link.ONLINE
         self.query_one(StatusBar).link = self._backend.link
         self.conversation.progress = self.progress
-        self.conversation.close("Choose a chat and press Enter.")
-        self.watch(self.app, "app_focus", self._read_soon, init=False)
+        self.conversation.failed_hints = hints(
+            self._keys, ("open", "try again"), ("edit", "back to writing"), ("delete", "discard")
+        )
+        self.conversation.close(self._invitation)
+        self.watch(self.app, "app_focus", self._focus_changed, init=False)
+        self.set_interval(LOOK_EVERY, self._look_for_reactions)
+        if self._alerts:
+            self._window = notify.terminal_window()
         self._show_draft()
         self._arrange()
         self._load()
@@ -149,6 +179,11 @@ class MainScreen(Writing, Finding, MediaActions):
     def on_unmount(self) -> None:
         while self._unsubscribe:
             self._unsubscribe.pop()()
+
+    @property
+    def _invitation(self) -> str:
+        key = pretty(self._keys["open"])
+        return f"Choose a chat and press {key}." if key else "Choose a chat."
 
     @property
     def _gone(self) -> bool:
@@ -272,11 +307,15 @@ class MainScreen(Writing, Finding, MediaActions):
         if self._gone:
             return
         change = self.store.apply(event)
+        if self._alerts:
+            self._alerts.event(event)
         if isinstance(event, MessagesRemoved):
             self._drafts_lost(event)
         self._show(change)
 
     def _show(self, change: Change) -> None:
+        if change.typing:
+            self._show_typing()
         if change.chats:
             self._redraw_chats()
         if self.active is not None:
@@ -344,10 +383,12 @@ class MainScreen(Writing, Finding, MediaActions):
 
     def _show_mode(self) -> None:
         status = self.query_one(StatusBar)
+        self.query_one(Divider).light(self.writing)
         if self.writing:
             status.mode, status.hints = "WRITE", _WRITE_HINTS
         else:
-            status.mode, status.hints = "", _CHAT_HINTS if self.in_chat else _LIST_HINTS
+            status.mode = ""
+            status.hints = hints(self._keys, *(_CHAT_HINTS if self.in_chat else _LIST_HINTS))
 
     def on_descendant_focus(self) -> None:
         self._focus_moved()
@@ -428,7 +469,9 @@ class MainScreen(Writing, Finding, MediaActions):
             await self._load_newest(chat_id)
         except BackendError as error:
             if chat_id == self.active:
-                self.conversation.set_note(f"{error.message} Press Enter in the list to try again.")
+                key = pretty(self._keys["open"])
+                again = f" Press {key} in the list to try again." if key else ""
+                self.conversation.set_note(error.message + again)
 
     def _close_tab(self, chat_id: int) -> None:
         if chat_id not in self.open_chats:
@@ -443,7 +486,7 @@ class MainScreen(Writing, Finding, MediaActions):
         self.in_chat = self.fullscreen = False
         self.set_focus(None)
         self._show_draft()
-        self.conversation.close("Choose a chat and press Enter.")
+        self.conversation.close(self._invitation)
         self._arrange()
         self._redraw_chats()
 

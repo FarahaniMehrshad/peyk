@@ -15,6 +15,7 @@ from peyk.config import Config
 from peyk.loop import use_lazy_tasks
 from peyk.paths import Paths
 from peyk.platform.graphics import Graphics
+from peyk.platform.notify import Notifier
 from peyk.platform.palette import Palette
 from peyk.secrets import SecretError, Secrets
 from peyk.ui import themes
@@ -39,6 +40,7 @@ class PeykApp(App[None]):
         backend: Backend | None = None,
         graphics: Graphics | None = None,
         palette: Palette | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         """With `backend`, run on it directly (demo): nothing is read or stored.
 
@@ -51,6 +53,7 @@ class PeykApp(App[None]):
         self._factory = factory
         self._fixed = backend
         self._graphics = graphics
+        self._notifier = notifier
         self._backend = backend
         self._secrets: Secrets | None = None
 
@@ -116,7 +119,9 @@ class PeykApp(App[None]):
 
     def on_login_screen_signed_in(self) -> None:
         assert self._backend
-        self._replace(MainScreen(self._backend, self._config, self._graphics))
+        self._replace(
+            MainScreen(self._backend, self._config, self._graphics, self._notifier)
+        )
 
     async def on_login_screen_edit_setup(self, event: LoginScreen.EditSetup) -> None:
         if self._fixed:
@@ -134,6 +139,8 @@ class PeykApp(App[None]):
     # -- sign out and exit --------------------------------------------------
 
     async def on_main_screen_logged_out(self) -> None:
+        if self._notifier:
+            self._notifier.clear(for_good=True)
         if self._fixed:
             self._replace(LoginScreen(self._fixed))
             return
@@ -156,6 +163,8 @@ class PeykApp(App[None]):
             self.exit()
 
     async def on_unmount(self) -> None:
+        if self._notifier:
+            self._notifier.close()
         await self._close_backend()
 
     def _replace(self, screen, callback=None) -> None:

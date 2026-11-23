@@ -12,10 +12,11 @@ from textual.widgets import Static
 
 from peyk.backend.base import BackendError
 from peyk.images import Box, fit
+from peyk.keys import hints
 from peyk.models import Message
 from peyk.text import format as fmt
 from peyk.ui.gallery import Gallery
-from peyk.ui.keymap import pressed
+from peyk.ui.keymap import action_for, pressed
 from peyk.ui.widgets.bidi_label import BidiLabel
 from peyk.ui.widgets.sixels import SixelLayer, Spot
 from peyk.ui.widgets.strips import TextOptions, backdrop
@@ -107,10 +108,16 @@ class ViewerScreen(ModalScreen[Message | None]):
     """Dismissed with a message to open in another program, if any."""
 
     def __init__(
-        self, gallery: Gallery, options: TextOptions, messages: list[Message], index: int
+        self,
+        gallery: Gallery,
+        options: TextOptions,
+        messages: list[Message],
+        index: int,
+        keys: dict[str, str],
     ) -> None:
         """`messages` all have a picture."""
         super().__init__()
+        self._keys = keys
         self._gallery = gallery
         self._options = options
         self._messages = messages
@@ -154,24 +161,31 @@ class ViewerScreen(ModalScreen[Message | None]):
         line = f"{who}, {fmt.list_date(message.date)} {fmt.clock(message.date)}"
         self.query_one("#viewer-text", BidiLabel).update(f"{line}\n{text}" if text else line)
         place = f"{self._index + 1}/{len(self._messages)}  "
-        move = "h/l: previous/next    " if len(self._messages) > 1 else ""
+        parts = [("focus_list focus_chat", "previous/next"), ("open_media", "another program")]
+        several = len(self._messages) > 1
+        shown = hints(self._keys, *parts[0 if several else 1 :])
         self.query_one("#viewer-hints", Static).update(
-            f"{self._note}{place if move else ''}{move}o: open in another program    Esc: close"
+            f"{self._note}{place if several else ''}{shown}  Esc close"
         )
 
     def on_key(self, event: events.Key) -> None:
         key = pressed(event)
-        match key:
-            case "h" | "k" | "left" | "up":
-                self._step(-1)
-            case "l" | "j" | "right" | "down" | "space" | " ":
-                self._step(1)
-            case "o":
-                self.dismiss(self.message)
-            case "escape" | "q" | "p" | "enter":
-                self.dismiss(None)
-            case _:
-                return
+        if key in ("escape", "q", "enter"):
+            self.dismiss(None)
+        elif key == " ":
+            self._step(1)
+        else:
+            match action_for(event, self._keys):
+                case "focus_list" | "up":
+                    self._step(-1)
+                case "focus_chat" | "down":
+                    self._step(1)
+                case "open_media":
+                    self.dismiss(self.message)
+                case "preview" | "quit" | "deselect":
+                    self.dismiss(None)
+                case _:
+                    return
         event.stop()
         event.prevent_default()
 

@@ -1,10 +1,12 @@
-from types import SimpleNamespace
+import sys
+import threading
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from peyk import files
 from peyk.paths import Paths
-from peyk.platform import clipboard, opener
+from peyk.platform import clipboard, notify, opener
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +39,62 @@ def launched(monkeypatch):
     monkeypatch.setattr(opener, "os", SimpleNamespace(startfile=things.append))
     monkeypatch.setattr(opener, "subprocess", SimpleNamespace(Popen=things.append))
     return things
+
+
+@pytest.fixture(autouse=True)
+def windows(monkeypatch):
+    """What Windows would have shown; it is never asked to."""
+    state = SimpleNamespace(
+        senders=[], shown=[], removed=[], cleared=0, registered=False, trouble=None,
+        threads=set(),
+    )  # fmt: skip
+
+    class Toaster:
+        def __init__(self, name, sender):
+            state.senders.append((name, sender))
+
+        def show_toast(self, toast):
+            state.threads.add(threading.current_thread().name)
+            self._try()
+            state.shown.append(toast)
+
+        def remove_toast(self, toast):
+            self._try()
+            state.removed.append(toast)
+
+        def clear_toasts(self):
+            state.cleared += 1
+
+        def _try(self):
+            if state.trouble:
+                raise state.trouble
+
+    class Toast:
+        def __init__(self, text_fields, group):
+            self.text_fields, self.group = text_fields, group
+            self.tag, self.audio, self.on_activated = "", None, None
+
+    def register(value):
+        if value and state.trouble:
+            raise state.trouble
+        state.registered = value
+
+    fake = ModuleType("windows_toasts")
+    fake.InteractableWindowsToaster, fake.Toast = Toaster, Toast
+    fake.ToastAudio = lambda silent: SimpleNamespace(silent=silent)
+    monkeypatch.setitem(sys.modules, "windows_toasts", fake)
+    monkeypatch.setattr(notify, "_register", lambda: register(True))
+    monkeypatch.setattr(notify, "_unregister", lambda: register(False))
+    monkeypatch.setattr(notify, "_registered", lambda: state.registered)
+    monkeypatch.setattr(notify, "terminal_window", lambda: 1)
+    return state
+
+
+@pytest.fixture
+def fronted(monkeypatch):
+    windows = []
+    monkeypatch.setattr(notify, "bring_to_front", windows.append)
+    return windows
 
 
 @pytest.fixture(autouse=True)

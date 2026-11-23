@@ -2,8 +2,7 @@
 
 A vim-style Telegram client for the Windows terminal. Python and Textual, no WSL, no compiler.
 
-Work in progress: you can sign in, read, write, search, and send and open files. Reactions,
-typing indicators and notifications come next.
+Work in progress: everything below works; installing it as a command comes next.
 
 ## Run
 
@@ -32,12 +31,28 @@ API keys: <https://my.telegram.org>, under "API development tools".
 | `f` | fullscreen |
 | `i` `r` `e` | write, reply to the selected message, edit it (or your last one) |
 | `d` `y` | delete (asks first), copy |
+| `+` | react to the selected message, or take it back |
 | `o` `p` `a` | open the file or link, show the picture, send a file |
 | `/` `?` `@` | find chats, messages, people in this chat and what they wrote |
 | `:` `F1` | command bar, all keys |
 | `L` `q` | log out, quit |
 
 They work on any keyboard layout: Peyk looks at the physical key.
+
+Change them in `config.toml`, as printed on a US keyboard:
+
+```toml
+[keys]
+react = "-"
+find_chat = "ctrl+f"
+logout = ""          # no key
+```
+
+The actions: `down` `up` `page_down` `page_up` `newest` `focus_list` `focus_chat` `open` `next_tab`
+`previous_tab` `close_tab` `close_others` `fullscreen` `deselect` `write` `reply` `edit` `delete`
+`copy` `react` `open_media` `preview` `attach` `find_chat` `find_message` `find_sender` `command`
+`help` `quit` `logout`. If two have the same key, or one is not a key, Peyk says so and does not
+start. Arrows, PgUp, PgDn, End and `Ctrl+Q` always work; digits are for folders and tabs.
 
 A chat is marked read only while it is open, the terminal has focus, and the message is on screen.
 
@@ -51,6 +66,24 @@ Every chat has its own draft until you quit. `**bold**`, `__italic__`, `~~strike
 A message that cannot be sent stays in the chat, marked `!`. After network trouble Peyk tries again
 by itself, never sending twice. If Telegram refuses it, select it: `Enter` tries again, `e` takes it
 back for editing, `d` discards it. Quitting warns you; unsent messages and drafts are not kept.
+
+## Reactions and typing
+
+`+` on a selected message shows the reactions that this chat allows, your favourites first: `1`-`9`
+gives one of the first nine, or move and press `Enter`. Choosing yours again takes it back. Yours are
+highlighted under the message. Custom emoji are shown as the ordinary emoji they stand for.
+
+Who is typing shows in the list and above the compose box. Others see when you type, unless you set
+`typing = false` under `[privacy]` in `config.toml`.
+
+## Notifications
+
+New messages are announced by Windows, one notification per chat, except in muted chats and in the
+chat you are looking at. A click opens the chat. They disappear when you read the chat anywhere, when
+the message is deleted, and when Peyk ends. Under `[notifications]`, `show_content = false` hides what
+was written and `enabled = false` turns them off. Windows only shows them from senders it knows, so
+Peyk registers its name for your account (`HKCU\Software\Classes\AppUserModelId\Peyk.Telegram`);
+logging out removes that.
 
 ## Searching
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from copy import copy
 from dataclasses import replace
 from datetime import datetime
@@ -11,7 +11,7 @@ from typing import Any
 from telethon import types, utils
 
 from peyk.files import safe_name
-from peyk.models import FOREVER, Chat, Folder, Kind, Media, Message, Reply, Span
+from peyk.models import FOREVER, Chat, Folder, Kind, Media, Message, Reaction, Reply, Span
 from peyk.text import format as fmt
 from peyk.text.markup import utf16_length
 from peyk.text.sanitize import sanitize_line, sanitize_map
@@ -54,6 +54,26 @@ _AUTOMATIC = (
     types.MessageEntityBotCommand,
     types.MessageEntityBankCard,
 )
+_DOING: dict[type, str] = {
+    types.SendMessageTypingAction: "typing",
+    types.SendMessageTextDraftAction: "typing",
+    types.SendMessageRichMessageDraftAction: "typing",
+    types.SendMessageRecordAudioAction: "recording a voice message",
+    types.SendMessageUploadAudioAction: "sending a voice message",
+    types.SendMessageRecordVideoAction: "recording a video",
+    types.SendMessageUploadVideoAction: "sending a video",
+    types.SendMessageRecordRoundAction: "recording a video message",
+    types.SendMessageUploadRoundAction: "sending a video message",
+    types.SendMessageUploadPhotoAction: "sending a photo",
+    types.SendMessageUploadDocumentAction: "sending a file",
+    types.SendMessageChooseStickerAction: "choosing a sticker",
+    types.SendMessageChooseContactAction: "choosing a contact",
+    types.SendMessageGeoLocationAction: "choosing a place",
+    types.SendMessageGamePlayAction: "playing a game",
+}
+_STOPPED = (types.SendMessageCancelAction, types.SendMessageStopDraftAction)
+CUSTOM = "custom:"
+UNKNOWN_EMOJI = "✦"
 _TELEGRAM = 777000  # its service notifications
 REAL_SIZES = (types.PhotoSize, types.PhotoSizeProgressive, types.PhotoCachedSize)
 PICTURE_TYPES = ("image/jpeg", "image/png", "image/webp")
@@ -425,6 +445,53 @@ def service_text(m: Any, who: str) -> str:
             return "Service message"
 
 
+def doing(action: Any) -> str | None:
+    """What somebody is doing; empty when they stopped, None if it is of no interest."""
+    return "" if isinstance(action, _STOPPED) else _DOING.get(type(action))
+
+
+def emoji(text: str) -> str:
+    """A label for an emoji from the server."""
+    return fmt.emoji(sanitize_line(text)[:16]) or UNKNOWN_EMOJI
+
+
+def reaction_key(raw: Any) -> str:
+    match raw:
+        case types.ReactionEmoji():
+            return raw.emoticon
+        case types.ReactionCustomEmoji():
+            return f"{CUSTOM}{raw.document_id}"
+        case types.ReactionPaid():
+            return "paid"
+        case _:
+            return ""
+
+
+def raw_reaction(key: str) -> Any:
+    if key.startswith(CUSTOM):
+        return types.ReactionCustomEmoji(int(key.removeprefix(CUSTOM)))
+    return types.ReactionEmoji(key)
+
+
+def reactions(raw: Any, names: Mapping[int, str]) -> tuple[Reaction, ...]:
+    """Most first, as the server sends them. `names` are the custom emoji we know."""
+    found = []
+    for result in getattr(raw, "results", None) or ():
+        key = reaction_key(result.reaction)
+        if key.startswith(CUSTOM):
+            label = names.get(result.reaction.document_id, UNKNOWN_EMOJI)
+        else:
+            label = "⭐" if key == "paid" else emoji(key)
+        if key and result.count > 0:
+            mine = result.chosen_order is not None
+            found.append(Reaction(key, label, result.count, mine))
+    return tuple(found)
+
+
+def custom_ids(found: Iterable[Reaction]) -> set[int]:
+    return {int(r.key.removeprefix(CUSTOM)) for r in found if r.key.startswith(CUSTOM)}
+
+
 def reply_id(m: Any) -> int:
     header = getattr(m, "reply_to", None)
     if not isinstance(header, types.MessageReplyHeader) or not header.reply_to_msg_id:
@@ -444,7 +511,9 @@ def _forwarded(m: Any) -> str:
     return name or sanitize_line(forward.from_name or "") or "unknown"
 
 
-def message(m: Any, chat_id: int, reply: Reply | None = None) -> Message:
+def message(
+    m: Any, chat_id: int, reply: Reply | None = None, names: Mapping[int, str] | None = None
+) -> Message:
     sender = name_of(m.sender)
     if not sender:
         sender = sanitize_line(m.post_author or "") or name_of(m.chat) or "Unknown"
@@ -456,6 +525,7 @@ def message(m: Any, chat_id: int, reply: Reply | None = None) -> Message:
         "sender": sender,
         "outgoing": bool(m.out),
         "mentioned": bool(m.mentioned),
+        "silent": bool(m.silent),
     }
     if getattr(m, "action", None) is not None:
         return Message(text=service_text(m, sender), service=True, **common)
@@ -463,6 +533,7 @@ def message(m: Any, chat_id: int, reply: Reply | None = None) -> Message:
     options = poll_options(m)
     if options:
         text = f"{text}\n{options}".lstrip("\n")
+    reacted = getattr(m, "reactions", None)
     target = reply_id(m)
     if reply is None and target:
         quote = sanitize_line(getattr(m.reply_to, "quote_text", None) or "")
@@ -474,6 +545,8 @@ def message(m: Any, chat_id: int, reply: Reply | None = None) -> Message:
         reply=reply,
         forwarded=_forwarded(m),
         edited=bool(m.edit_date) and not m.edit_hide,
+        reactions=reactions(reacted, names or {}),
+        reactions_shared=bool(reacted and reacted.min),
         **common,
     )
 

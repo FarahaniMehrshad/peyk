@@ -17,11 +17,14 @@ from peyk.backend.base import (
     MessagesRemoved,
     OutboxRead,
     PinsChanged,
+    ReactionsChanged,
+    Typing,
 )
-from peyk.models import Chat, Folder, Message
+from peyk.models import Chat, Folder, Message, Reaction
 
 ALL = 0
 ARCHIVE = -1
+TYPING_LASTS = 6.0  # seconds, unless it is repeated
 _FIRST_CHANNEL = -1_000_000_000_000  # ids at or below this are channels and supergroups
 
 
@@ -95,6 +98,13 @@ class History:
         self.loaded = True
 
 
+@dataclass(frozen=True, slots=True)
+class Typist:
+    name: str  # empty if not known
+    what: str
+    until: float  # monotonic time
+
+
 @dataclass(slots=True)
 class Change:
     """What the UI must redraw or load after an event."""
@@ -102,6 +112,7 @@ class Change:
     chats: bool = False
     messages: set[int] = field(default_factory=set)  # chats whose history changed
     stale: set[int] = field(default_factory=set)  # chats whose last message is unknown
+    typing: bool = False
     reload_chats: bool = False
     reload_folders: bool = False
 
@@ -111,6 +122,7 @@ class Store:
         self.chats: dict[int, Chat] = {}
         self.folders: list[Folder] = []
         self.histories: dict[int, History] = {}
+        self._typing: dict[int, dict[int, Typist]] = {}
 
     # -- reading
 
@@ -138,6 +150,34 @@ class Store:
     def unread_chats(self, folder_id: int, now: float | None = None) -> int:
         now = time.time() if now is None else now
         return sum(c.has_unread and not c.muted(now) for c in self.visible(folder_id, now))
+
+    def typists(self, chat_id: int) -> list[Typist]:
+        now = time.monotonic()
+        return [t for t in self._typing.get(chat_id, {}).values() if t.until > now]
+
+    @property
+    def anyone_typing(self) -> bool:
+        return any(self._typing.values())
+
+    def forget_old_typing(self) -> bool:
+        """True if there was some."""
+        now = time.monotonic()
+        before = sum(map(len, self._typing.values()))
+        kept = {
+            chat_id: {user: t for user, t in people.items() if t.until > now}
+            for chat_id, people in self._typing.items()
+        }
+        self._typing = {chat_id: people for chat_id, people in kept.items() if people}
+        return sum(map(len, self._typing.values())) != before
+
+    def name_of(self, user_id: int, chat_id: int) -> str:
+        """As seen in what is loaded."""
+        chat = self.chats.get(user_id)
+        if chat:
+            return chat.title
+        history = self.histories.get(chat_id)
+        recent = reversed(history.messages) if history else ()
+        return next((m.sender for m in recent if m.sender_id == user_id), "")
 
     # -- writing
 
@@ -170,6 +210,10 @@ class Store:
                 self._changed(event.message, change)
             case MessagesRemoved():
                 self._removed(event, change)
+            case ReactionsChanged():
+                self._reacted(event, change)
+            case Typing():
+                self._typed(event, change)
             case InboxRead():
                 self._inbox_read(event, change)
             case OutboxRead():
@@ -202,6 +246,7 @@ class Store:
 
     def _added(self, event: MessageAdded, change: Change) -> None:
         message = event.message
+        self._stopped_typing(message.chat_id, message.sender_id, change)
         chat = self.chats.get(message.chat_id) or event.chat
         if chat is None:
             change.reload_chats = True
@@ -227,11 +272,42 @@ class Store:
         if history and (old := history.get(message.id)):
             if message.reply and not message.reply.name and old.reply:
                 message = replace(message, reply=old.reply)
+            if message.reactions_shared:
+                message = replace(
+                    message,
+                    reactions=_with_ours(message.reactions, old.reactions),
+                    reactions_shared=old.reactions_shared,
+                )
             history.put(message)
             change.messages.add(message.chat_id)
         chat = self.chats.get(message.chat_id)
         if chat and chat.last and chat.last.id == message.id:
             self._replace(chat, change, last=message)
+
+    def _reacted(self, event: ReactionsChanged, change: Change) -> None:
+        history = self.histories.get(event.chat_id)
+        old = history.get(event.message_id) if history else None
+        if not history or not old:
+            return
+        reactions, shared = event.reactions, event.shared
+        if shared:
+            reactions, shared = _with_ours(reactions, old.reactions), old.reactions_shared
+        if reactions != old.reactions or shared != old.reactions_shared:
+            history.put(replace(old, reactions=reactions, reactions_shared=shared))
+            change.messages.add(event.chat_id)
+
+    def _typed(self, event: Typing, change: Change) -> None:
+        if not event.what:
+            self._stopped_typing(event.chat_id, event.user_id, change)
+            return
+        people = self._typing.setdefault(event.chat_id, {})
+        name = event.name or self.name_of(event.user_id, event.chat_id)
+        people[event.user_id] = Typist(name, event.what, time.monotonic() + TYPING_LASTS)
+        change.typing = True
+
+    def _stopped_typing(self, chat_id: int, user_id: int, change: Change) -> None:
+        if self._typing.get(chat_id, {}).pop(user_id, None):
+            change.typing = True
 
     def _removed(self, event: MessagesRemoved, change: Change) -> None:
         if event.chat_id is not None:
@@ -276,6 +352,11 @@ class Store:
         if history and history.at_end and history.messages and history.messages[0].id <= up_to:
             return sum(not m.outgoing and m.id > up_to for m in history.messages)
         return chat.unread
+
+
+def _with_ours(new: tuple[Reaction, ...], old: tuple[Reaction, ...]) -> tuple[Reaction, ...]:
+    ours = {r.key for r in old if r.mine}
+    return tuple(replace(r, mine=r.key in ours) for r in new)
 
 
 def _when(chat: Chat) -> float:
