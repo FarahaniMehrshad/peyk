@@ -39,6 +39,7 @@ from peyk.models import (
     ReactionMenu,
     Reply,
     Span,
+    StickerPack,
     User,
 )
 from peyk.text import format as fmt
@@ -87,6 +88,8 @@ class FakeBackend:
         self.sent_files: dict[int, bytes] = {}
         self._file_ids = count(9000)
         self.menus: dict[int, ReactionMenu] = {}  # where they differ from the usual
+        self.sticker_list: list[StickerPack] = list(sample.STICKER_PACKS)
+        self.gifs: tuple[Media, ...] = sample.GIFS
 
     def fail(self, method: str, *failures: Exception) -> None:
         """Make the next calls to `method` raise."""
@@ -303,6 +306,34 @@ class FakeBackend:
         _, data = self._content(chat_id, message_id)
         await self._pretend(len(data), progress)
         sink.write(data)
+
+    # -- stickers and GIFs
+
+    async def sticker_packs(self) -> list[StickerPack]:
+        await self._step("sticker_packs")
+        return [
+            p if p.key in ("recent", "faved") else replace(p, stickers=())
+            for p in self.sticker_list
+        ]
+
+    async def stickers(self, pack: str) -> tuple[Media, ...]:
+        await self._step("stickers", pack)
+        found = next((p for p in self.sticker_list if p.key == pack), None)
+        if found is None:
+            raise BackendError(ErrorKind.REFUSED, "This sticker set is no longer installed.")
+        return found.stickers
+
+    async def saved_gifs(self) -> tuple[Media, ...]:
+        await self._step("saved_gifs")
+        return self.gifs
+
+    async def file_picture(self, file_id: int, side: int) -> bytes | None:
+        await self._step("file_picture", f"{file_id}:{side}")
+        everything = [*self.gifs, *(s for p in self.sticker_list for s in p.stickers)]
+        found = next((m for m in everything if m.id == file_id), None)
+        if found is None:
+            raise BackendError(ErrorKind.REFUSED, "That is no longer in your collection.")
+        return sample_files.picture(found)
 
     # -- reactions and typing
 

@@ -113,6 +113,7 @@ class MainScreen(Writing, Finding, MediaActions, Extras):
         self._last_folder: Path | None = None
         self._show_typing_to_others = config.show_typing
         self._told_typing: dict[int, float] = {}  # when, by chat
+        self._file_memory: dict[str, str] = {}  # the sticker pack open last
         self._typing_timer: Timer | None = None
         self._alerts: Alerts | None = None
         self._window = 0  # of the terminal

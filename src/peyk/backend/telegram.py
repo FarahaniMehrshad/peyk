@@ -17,6 +17,7 @@ from telethon.network.connection import (
     ConnectionTcpFull,
     ConnectionTcpMTProxyRandomizedIntermediate,
 )
+from telethon.tl.custom.file import File
 
 from peyk import __version__, images
 from peyk.backend import convert
@@ -52,11 +53,13 @@ from peyk.models import (
     Folder,
     Found,
     Kind,
+    Media,
     Message,
     Reaction,
     ReactionChoice,
     ReactionMenu,
     Span,
+    StickerPack,
     User,
 )
 from peyk.text import markup
@@ -112,7 +115,9 @@ _REFUSALS: dict[type, str] = {
     errors.ChatSendMediaForbiddenError: _NO_FILES,
     errors.ChatSendPhotosForbiddenError: _NO_FILES,
     errors.ChatSendVideosForbiddenError: _NO_FILES,
-    errors.ChatSendGifsForbiddenError: _NO_FILES,
+    errors.ChatSendGifsForbiddenError: "This chat does not allow GIFs.",
+    errors.ChatSendStickersForbiddenError: "This chat does not allow stickers.",
+    errors.StickersetInvalidError: "This sticker set no longer exists.",
     errors.PhotoInvalidDimensionsError: _BAD_PHOTO,
     errors.PhotoExtInvalidError: _BAD_PHOTO,
     errors.PhotoInvalidError: _BAD_PHOTO,
@@ -215,6 +220,12 @@ class TelegramBackend:
         self._custom: dict[int, str] = {}  # what stands in for custom emoji
         self._choices: list[tuple[ReactionChoice, bool]] | None = None  # needs Premium?
         self._menus: dict[int, tuple[float, ReactionMenu]] = {}
+        # Stickers and GIFs, with the hash that says whether they changed.
+        self._sets_hash = 0
+        self._sets: list[Any] = []
+        self._lists: dict[str, tuple[int, tuple[Media, ...]]] = {}
+        self._set_stickers: dict[int, tuple[int, tuple[Media, ...]]] = {}
+        self._documents: dict[int, tuple[Any, str]] = {}  # with the list it came from
         self.link = Link.OFFLINE
 
     # -- connection ---------------------------------------------------------
@@ -560,13 +571,23 @@ class TelegramBackend:
             "reply_to": types.InputReplyToMessage(reply_to) if reply_to else None,
             "random_id": token,
         }
-        request = (
-            functions.messages.SendMediaRequest(media=_input_media(uploaded), **common)
-            if uploaded
-            else functions.messages.SendMessageRequest(**common)
-        )
+
+        async def deliver(media: Any) -> tuple[Any, Any]:
+            request = (
+                functions.messages.SendMediaRequest(media=media, **common)
+                if media
+                else functions.messages.SendMessageRequest(**common)
+            )
+            return request, await self._call(client(request))
+
         try:
-            result = await self._call(client(request))
+            if isinstance(uploaded, Media):  # a sticker or GIF of ours
+                request, result = await self._with_document(
+                    uploaded.id,
+                    lambda doc: deliver(types.InputMediaDocument(utils.get_input_document(doc))),
+                )
+            else:
+                request, result = await deliver(_input_media(uploaded) if uploaded else None)
         except BackendError as error:
             if isinstance(error.__cause__, errors.RandomIdDuplicateError):
                 return None
@@ -786,24 +807,30 @@ class TelegramBackend:
 
     async def picture(self, chat_id: int, message_id: int, side: int) -> bytes | None:
         async def fetch(raw: Any, tick: Progress) -> bytes | None:
-            client = self._need_client()
-            whole = raw.document and raw.file.mime_type in convert.PICTURE_TYPES
-            small_enough = (raw.file.size or 0) <= convert.MAX_PICTURE if raw.file else False
-            thing = raw.photo or raw.document
-            sizes = (thing.sizes if raw.photo else thing.thumbs) or () if thing else ()
-            size = _best_size(sizes, side)
-            enough = size is not None and max(size.w, size.h) >= side
-            if whole and small_enough and not enough and (size is None or side > 400):
-                return await client.download_media(raw, bytes, progress_callback=tick)
-            if size is None:
-                return None
-            # By its letter: Telethon does not take a progressive size itself.
-            thumb = size.type if raw.photo else size
-            if not raw.photo and isinstance(size, types.PhotoSizeProgressive):
-                return None
-            return await client.download_media(raw, bytes, thumb=thumb, progress_callback=tick)
+            return await self._picture_of(raw, raw.photo, raw.document, raw.file, side, tick)
 
         return await self._transfer(chat_id, message_id, fetch, lambda done, total: None)
+
+    async def _picture_of(
+        self, source: Any, photo: Any, document: Any, file: Any, side: int, tick: Progress
+    ) -> bytes | None:
+        """`source` is a message or a document."""
+        client = self._need_client()
+        whole = document is not None and file and file.mime_type in convert.PICTURE_TYPES
+        small_enough = (file.size or 0) <= convert.MAX_PICTURE if file else False
+        thing = photo or document
+        sizes = (thing.sizes if photo else thing.thumbs) or () if thing else ()
+        size = _best_size(sizes, side)
+        enough = size is not None and max(size.w, size.h) >= side
+        if whole and small_enough and not enough and (size is None or side > 400):
+            return await client.download_media(source, bytes, progress_callback=tick)
+        if size is None:
+            return None
+        # By its letter: Telethon does not take a progressive size itself.
+        thumb = size.type if photo else size
+        if not photo and isinstance(size, types.PhotoSizeProgressive):
+            return None
+        return await client.download_media(source, bytes, thumb=thumb, progress_callback=tick)
 
     async def download(
         self, chat_id: int, message_id: int, sink: BinaryIO, progress: Progress
@@ -848,6 +875,101 @@ class TelegramBackend:
                     progress(int(done), int(total or 0))
 
                 return await start(tick)
+
+    # -- stickers and GIFs ---------------------------------------------------
+
+    async def sticker_packs(self) -> list[StickerPack]:
+        client = self._need_client()
+        recent, faved, everything = await asyncio.gather(
+            self._list("recent"),
+            self._list("faved"),
+            self._call(client(functions.messages.GetAllStickersRequest(self._sets_hash))),
+        )
+        if isinstance(everything, types.messages.AllStickers):
+            self._sets_hash, self._sets = everything.hash, list(everything.sets)
+        mine = (("recent", "Recent", recent), ("faved", "Favourites", faved))
+        packs = [StickerPack(key, title, len(found), found) for key, title, found in mine if found]
+        for found in self._sets:
+            if found.archived or found.masks or found.emojis:
+                continue
+            known = self._set_stickers.get(found.id)
+            stickers = known[1] if known and known[0] == found.hash else ()
+            title = sanitize_line(found.title) or "Stickers"
+            packs.append(StickerPack(f"set:{found.id}", title, found.count, stickers))
+        return packs
+
+    async def stickers(self, pack: str) -> tuple[Media, ...]:
+        if not pack.startswith("set:"):
+            return self._lists.get(pack, (0, ()))[1]
+        set_id = int(pack.removeprefix("set:"))
+        found = next((s for s in self._sets if s.id == set_id), None)
+        if found is None:
+            raise BackendError(ErrorKind.REFUSED, "This sticker set is no longer installed.")
+        known = self._set_stickers.get(set_id)
+        if known and known[0] == found.hash:
+            return known[1]
+        which = types.InputStickerSetID(found.id, found.access_hash)
+        result = await self._call(
+            self._need_client()(functions.messages.GetStickerSetRequest(which, hash=0))
+        )
+        stickers = self._learn(result.documents, pack)
+        self._set_stickers[set_id] = (found.hash, stickers)
+        return stickers
+
+    async def saved_gifs(self) -> tuple[Media, ...]:
+        return await self._list("gifs")
+
+    async def _list(self, key: str) -> tuple[Media, ...]:
+        """Recent or favourite stickers, or saved GIFs; asked again only if changed."""
+        known_hash, known = self._lists.get(key, (0, ()))
+        result = await self._call(self._need_client()(_LISTS[key](known_hash)))
+        documents = getattr(result, "gifs" if key == "gifs" else "stickers", None)
+        if documents is None:  # not modified
+            return known
+        found = self._learn(documents, key)
+        self._lists[key] = (result.hash, found)
+        return found
+
+    def _learn(self, documents: Iterable[Any], source: str) -> tuple[Media, ...]:
+        found = []
+        for doc in documents:
+            media = convert.document(doc)
+            if media:
+                self._documents[doc.id] = (doc, source)
+                found.append(media)
+        return tuple(found)
+
+    async def file_picture(self, file_id: int, side: int) -> bytes | None:
+        async def fetch(doc: Any) -> bytes | None:
+            return await self._watched(
+                lambda tick: self._picture_of(doc, None, doc, File(doc), side, tick),
+                lambda done, total: None,
+            )
+
+        return await self._with_document(file_id, fetch)
+
+    async def _with_document(self, file_id: int, use: Callable[[Any], Awaitable[T]]) -> T:
+        """References to files expire; then the list it came from is fetched again."""
+        doc, source = self._document(file_id)
+        try:
+            return await use(doc)
+        except BackendError as error:
+            if not isinstance(error.__cause__, _STALE_REFERENCE):
+                raise
+        self._documents.pop(file_id, None)  # unless it is still there
+        if source.startswith("set:"):
+            self._set_stickers.pop(int(source.removeprefix("set:")), None)
+            await self.stickers(source)
+        else:
+            self._lists.pop(source, None)
+            await self._list(source)
+        return await use(self._document(file_id)[0])
+
+    def _document(self, file_id: int) -> tuple[Any, str]:
+        known = self._documents.get(file_id)
+        if known is None:
+            raise BackendError(ErrorKind.REFUSED, "That is no longer in your collection.")
+        return known
 
     # -- searching -----------------------------------------------------------
 
@@ -1003,6 +1125,13 @@ class TelegramBackend:
         self._client = None
         remove_session(self._path)
         self._set_link(Link.OFFLINE)
+
+
+_LISTS: dict[str, Callable[[int], Any]] = {
+    "recent": functions.messages.GetRecentStickersRequest,
+    "faved": functions.messages.GetFavedStickersRequest,
+    "gifs": functions.messages.GetSavedGifsRequest,
+}
 
 
 def _as_results(some: Iterable[Any]) -> Any:

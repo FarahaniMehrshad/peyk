@@ -76,12 +76,53 @@ def _landscape(seed: int, width: int, height: int) -> bytes:
     return _encoded(image, "JPEG", quality=85)
 
 
-@lru_cache(maxsize=4)
+_COLOURS = (
+    (255, 205, 60), (250, 120, 140), (110, 180, 250), (120, 210, 130), (190, 140, 240),
+    (250, 160, 70), (90, 210, 210),
+)  # fmt: skip
+_INK = (60, 40, 20, 255)
+
+
+@lru_cache(maxsize=64)
 def _sticker(seed: int) -> bytes:
+    """A face, a heart, a star or a cat, on a transparent ground."""
     image = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.ellipse([20, 20, 492, 492], fill=(255, 205, 60, 255), outline=(150, 100, 0, 255), width=10)
+    colour = (*_COLOURS[seed % len(_COLOURS)], 255)
+    edge = tuple(c * 6 // 10 for c in colour[:3]) + (255,)
+    shape = (seed - 7000) // 100 if 7000 <= seed < 7300 else 0
+    if shape == 1 and seed % 2:
+        points = [
+            (256 + math.cos(math.pi * (i / 5 - 0.5)) * (236 if i % 2 == 0 else 100),
+             256 + math.sin(math.pi * (i / 5 - 0.5)) * (236 if i % 2 == 0 else 100))
+            for i in range(10)
+        ]  # fmt: skip
+        draw.polygon(points, fill=colour, outline=edge, width=10)
+        return _encoded(image, "WEBP")
+    if shape == 1:
+        draw.ellipse([40, 70, 270, 300], fill=colour)
+        draw.ellipse([242, 70, 472, 300], fill=colour)
+        draw.polygon([(52, 230), (460, 230), (256, 470)], fill=colour)
+        return _encoded(image, "WEBP")
+    if shape == 2:
+        draw.polygon([(60, 220), (90, 30), (220, 120)], fill=colour, outline=edge, width=8)
+        draw.polygon([(452, 220), (422, 30), (292, 120)], fill=colour, outline=edge, width=8)
+    draw.ellipse([20, 40, 492, 500], fill=colour, outline=edge, width=10)
+    mood = seed % 4
     for x in (170, 342):
-        draw.ellipse([x - 30, 160, x + 30, 240], fill=(60, 40, 0, 255))
-    draw.arc([130, 180, 382, 400], 20, 160, fill=(60, 40, 0, 255), width=22)
+        if mood == 3 and x == 342:
+            draw.line([x - 35, 210, x + 35, 210], fill=_INK, width=18)  # a wink
+        else:
+            draw.ellipse([x - 30, 170, x + 30, 250], fill=_INK)
+    if mood == 1:
+        draw.ellipse([196, 320, 316, 430], fill=_INK)  # surprised
+    elif mood == 2:
+        draw.arc([150, 340, 362, 500], 200, 340, fill=_INK, width=22)  # sad
+    else:
+        draw.arc([130, 200, 382, 420], 20, 160, fill=_INK, width=22)
+    if shape == 2:
+        for side in (-1, 1):
+            for dy in (-20, 20):
+                draw.line([256 + side * 120, 330 + dy, 256 + side * 230, 320 + dy * 2],
+                          fill=_INK, width=6)  # fmt: skip
     return _encoded(image, "WEBP")

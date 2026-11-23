@@ -28,6 +28,8 @@ COMMANDS = (
     Command("saved", "saved", "open Saved Messages"),
     Command("read", "mark_read", "mark the chat as read"),
     Command("attach", "attach", "send a file"),
+    Command("sticker", "stickers", "send a sticker"),
+    Command("gif", "gifs", "send a GIF"),
     Command("downloads", "downloads", "show the folder with downloads"),
     Command("close", "close_tab", "close this tab", ("x",)),
     Command("only", "close_others", "close the other tabs"),

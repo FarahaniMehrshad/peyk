@@ -37,6 +37,7 @@ SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("{open_media}", "open the file or link; again stops the download"),
         ("{preview}", "show the picture"),
         ("{attach}", "send a file or photo"),
+        ("{stickers} {gifs}", "send a sticker, a GIF"),
     )),
     ("While writing", (
         ("Enter", "send"),

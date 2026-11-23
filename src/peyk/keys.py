@@ -29,6 +29,8 @@ DEFAULT_KEYS: dict[str, str] = {
     "open_media": "o",
     "preview": "p",
     "attach": "a",
+    "stickers": "s",
+    "gifs": "g",
     "find_chat": "/",
     "find_message": "?",
     "find_sender": "@",

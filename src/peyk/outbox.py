@@ -46,6 +46,7 @@ class Outbox:
         self._typed: dict[int, str] = {}
         self._tries: dict[int, int] = {}
         self._attachments: dict[int, Attachment] = {}
+        self._ready: dict[int, Media] = {}  # stickers and GIFs: on Telegram already
         self._uploaded: dict[int, Any] = {}
         self._uploads: dict[int, asyncio.Future[Any]] = {}
         self._in_flight: set[int] = set()
@@ -71,8 +72,9 @@ class Outbox:
         sender_id: int,
         typed: str,
         attachment: Attachment | None = None,
+        ready: Media | None = None,
     ) -> Message:
-        """`typed` is the text with its formatting marks."""
+        """`typed` is the text with its formatting marks. `ready`: a sticker or GIF."""
         message = Message(
             id=next(self._ids),
             chat_id=chat_id,
@@ -83,11 +85,13 @@ class Outbox:
             sender="You",
             outgoing=True,
             reply=reply,
-            media=_shown(attachment) if attachment else None,
+            media=_shown(attachment) if attachment else ready,
             state=State.SENDING,
         )
         if attachment:
             self._attachments[message.id] = attachment
+        if ready:
+            self._ready[message.id] = ready
         self._tokens[message.id] = secrets.randbits(63) or 1
         self._typed[message.id] = typed
         self._queues.setdefault(chat_id, []).append(message)
@@ -108,6 +112,10 @@ class Outbox:
         self._go(chat_id)
         return message
 
+    def is_ready_file(self, message_id: int) -> bool:
+        """A sticker or GIF, which cannot be taken back into the box."""
+        return message_id in self._ready
+
     def take_back(
         self, chat_id: int, message_id: int
     ) -> tuple[str, Reply | None, Attachment | None] | None:
@@ -125,6 +133,7 @@ class Outbox:
         self._tries.pop(message.id, None)
         self._attachments.pop(message.id, None)
         self._uploaded.pop(message.id, None)
+        self._ready.pop(message.id, None)
 
     def retry(self, chat_id: int, message_id: int) -> None:
         message = self.get(chat_id, message_id)
@@ -180,7 +189,7 @@ class Outbox:
                 message.spans,
                 message.reply.id if message.reply else 0,
                 self._tokens[message.id],
-                self._uploaded.get(message.id),
+                self._uploaded.get(message.id) or self._ready.get(message.id),
             )
         except BackendError as error:
             if error.kind not in (ErrorKind.NETWORK, ErrorKind.FLOOD):

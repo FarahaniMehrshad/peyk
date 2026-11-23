@@ -65,6 +65,14 @@ class Attachment:
 
 
 @dataclass(frozen=True, slots=True)
+class StickerPack:
+    key: str  # "recent", "faved", or "set:" and its id
+    title: str
+    count: int = 0
+    stickers: tuple[Media, ...] = ()  # of installed sets: only once the pack is opened
+
+
+@dataclass(frozen=True, slots=True)
 class Reaction:
     key: str  # the emoji, "custom:" and its id, or "paid"
     label: str  # what to show

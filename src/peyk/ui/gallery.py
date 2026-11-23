@@ -6,7 +6,8 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
+from functools import partial
 
 from PIL import Image
 from rich.segment import Segment
@@ -28,6 +29,7 @@ RETRY = 30  # seconds after network trouble
 STICKER_ROWS = 6
 
 NOTHING, BLURRED, SHARP = range(3)
+Fetch = Callable[[], Awaitable[bytes | None]]
 
 
 class Gallery:
@@ -47,10 +49,22 @@ class Gallery:
         self._blurred: OrderedDict[int, Image.Image | None] = OrderedDict()
         self._large: OrderedDict[int, Image.Image] = OrderedDict()
         self._not_before: dict[int, float] = {}
-        self._wanted: list[Message] = []
+        # Pictures of stickers and GIFs go first: they are asked for by a popup on top.
+        self._wanted: dict[str, list[tuple[Media, Fetch]]] = {"files": [], "messages": []}
         self._fetching: set[int] = set()
         self._workers = 0
         self._drawn: OrderedDict[tuple, object] = OrderedDict()
+        self._watchers: list[Callable[[], None]] = []
+
+    def watch(self, changed: Callable[[], None]) -> Callable[[], None]:
+        """Called too when a picture arrives. Returns what stops it."""
+        self._watchers.append(changed)
+        return lambda: self._watchers.remove(changed)
+
+    def _arrived(self) -> None:
+        self._changed()
+        for watcher in list(self._watchers):
+            watcher()
 
     # -- what there is ------------------------------------------------------
 
@@ -119,18 +133,29 @@ class Gallery:
 
     def want(self, messages: list[Message]) -> None:
         """These are on screen. What was wanted before no longer is."""
-        now = time.monotonic()
-        self._wanted = [
-            m
-            for m in messages
-            if m.media
-            and m.media.picture
-            and m.media.id
-            and m.media.id not in self._sharp
-            and m.media.id not in self._fetching
-            and self._not_before.get(m.media.id, 0) <= now
+        backend = self._backend
+        found = [
+            (m.media, partial(backend.picture, m.chat_id, m.id, SIDE)) for m in messages if m.media
         ]
-        for _ in range(min(AT_ONCE - self._workers, len(self._wanted))):
+        self._want("messages", found)
+
+    def want_files(self, files: list[Media]) -> None:
+        """Stickers and GIFs of our own; the same as `want`, for messages."""
+        self._want("files", [(f, partial(self._backend.file_picture, f.id, SIDE)) for f in files])
+
+    def _want(self, kind: str, found: list[tuple[Media, Fetch]]) -> None:
+        now = time.monotonic()
+        self._wanted[kind] = [
+            (media, fetch)
+            for media, fetch in found
+            if media.picture
+            and media.id
+            and media.id not in self._sharp
+            and media.id not in self._fetching
+            and self._not_before.get(media.id, 0) <= now
+        ]
+        waiting = sum(len(some) for some in self._wanted.values())
+        for _ in range(min(AT_ONCE - self._workers, waiting)):
             self._workers += 1
             self._start(self._fetch_wanted())
 
@@ -140,19 +165,17 @@ class Gallery:
 
     async def _fetch_wanted(self) -> None:
         try:
-            while self._wanted:
-                await self._fetch(self._wanted.pop(0))
+            while some := next((w for w in self._wanted.values() if w), None):
+                await self._fetch(*some.pop(0))
         finally:
             self._workers -= 1
 
-    async def _fetch(self, message: Message) -> None:
-        media = message.media
-        assert media
+    async def _fetch(self, media: Media, fetch: Fetch) -> None:
         if media.id in self._sharp or media.id in self._fetching:
             return
         self._fetching.add(media.id)
         try:
-            data = await self._backend.picture(message.chat_id, message.id, SIDE)
+            data = await fetch()
             image = await asyncio.to_thread(images.decode, data, SIDE * 2) if data else None
         except BackendError as error:
             log.info("picture not loaded: %s", error.kind.name)
@@ -166,7 +189,7 @@ class Gallery:
             self._not_before[media.id] = float("inf")
             return
         _keep(self._sharp, media.id, image, MAX_KEPT)
-        self._changed()
+        self._arrived()
 
     async def large(self, message: Message) -> Image.Image | None:
         """For the whole window. None if there is none; may raise."""

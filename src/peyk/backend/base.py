@@ -12,10 +12,12 @@ from peyk.models import (
     Chat,
     Folder,
     Found,
+    Media,
     Message,
     Reaction,
     ReactionMenu,
     Span,
+    StickerPack,
     User,
 )
 
@@ -210,7 +212,8 @@ class Backend(Protocol):
     ) -> Message | None:
         """Trying again with the same token never sends twice; then it may return None.
 
-        With `uploaded`, from `upload`, the text is the caption.
+        With `uploaded`, from `upload`, the text is the caption. It may also be the
+        Media of a sticker or GIF from `sticker_packs`, `stickers` or `saved_gifs`.
         """
         ...
 
@@ -223,6 +226,18 @@ class Backend(Protocol):
     async def download(
         self, chat_id: int, message_id: int, sink: BinaryIO, progress: Progress
     ) -> None: ...
+
+    async def sticker_packs(self) -> list[StickerPack]:
+        """Recent and favourite stickers with their stickers, then installed sets without."""
+        ...
+
+    async def stickers(self, pack: str) -> tuple[Media, ...]: ...
+
+    async def saved_gifs(self) -> tuple[Media, ...]: ...
+
+    async def file_picture(self, file_id: int, side: int) -> bytes | None:
+        """The picture of a sticker or GIF from the lists above."""
+        ...
 
     async def edit(
         self, chat_id: int, message_id: int, text: str, formatting: bool = True

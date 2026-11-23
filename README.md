@@ -33,6 +33,7 @@ API keys: <https://my.telegram.org>, under "API development tools".
 | `d` `y` | delete (asks first), copy |
 | `+` | react to the selected message, or take it back |
 | `o` `p` `a` | open the file or link, show the picture, send a file |
+| `s` `g` | send a sticker, a GIF |
 | `/` `?` `@` | find chats, messages, people in this chat and what they wrote |
 | `:` `F1` | command bar, all keys |
 | `L` `q` | log out, quit |
@@ -50,8 +51,8 @@ logout = ""          # no key
 
 The actions: `down` `up` `page_down` `page_up` `newest` `focus_list` `focus_chat` `open` `next_tab`
 `previous_tab` `close_tab` `close_others` `fullscreen` `deselect` `write` `reply` `edit` `delete`
-`copy` `react` `open_media` `preview` `attach` `find_chat` `find_message` `find_sender` `command`
-`help` `quit` `logout`. If two have the same key, or one is not a key, Peyk says so and does not
+`copy` `react` `open_media` `preview` `attach` `stickers` `gifs` `find_chat` `find_message`
+`find_sender` `command` `help` `quit` `logout`. If two have the same key, or one is not a key, Peyk says so and does not
 start. Arrows, PgUp, PgDn, End and `Ctrl+Q` always work; digits are for folders and tabs.
 
 A chat is marked read only while it is open, the terminal has focus, and the message is on screen.
@@ -100,6 +101,11 @@ A link whose text hides where it goes is shown first, and only `http` and `https
 `a` sends a file: type to filter, or paste a path. Pictures go as photos, without their metadata
 (place, camera); `Tab` sends them as files, untouched. What you write next is the caption. `d` on the
 message stops the upload.
+
+`s` shows your stickers: recent ones, favourites, then your sets, in the order you gave them; `Tab`
+goes to the next pack. `g` shows your saved GIFs. Move with `h` `j` `k` `l` and send with `Enter`; if
+you were replying, the sticker is the reply. Animated stickers and GIFs show as a still picture.
+Packs and GIFs are added in an official app.
 
 Pictures show between the messages, sharp if the terminal supports Sixel (Windows Terminal 1.22),
 otherwise as coloured blocks. `p` fills the window with one; `h` `l` walk through the others.

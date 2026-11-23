@@ -17,6 +17,7 @@ from peyk.models import (
     ReactionChoice,
     Reply,
     Span,
+    StickerPack,
 )
 from peyk.text.format import emoji
 
@@ -48,6 +49,35 @@ REACTIONS = tuple(ReactionChoice(key, emoji(key), name) for key, name in _REACTI
 def reacted(*given: tuple[str, int, bool]) -> tuple[Reaction, ...]:
     return tuple(Reaction(key, emoji(key), count, mine) for key, count, mine in given)
 
+
+def _sticker(media_id: int, emoji_: str) -> Media:
+    return Media("sticker", f"Sticker {emoji(emoji_)}", media_id, "", "image/webp", 20_000, True,
+                 512, 512)  # fmt: skip
+
+
+def _gif(media_id: int, width: int, height: int) -> Media:
+    media = Media("gif", "GIF", media_id, "", "video/mp4", 400_000, True, width, height)
+    return replace(media, preview=sample_files.tiny(media))
+
+
+_FACES = "😀😂😍😎😴😡🤔😭😇🤩😱🥳"
+_HEARTS = "❤💖💙💚💛💜⭐🌟"
+_CATS = "😺😸😹😻😼😽🙀😿😾🐱"
+FACES = tuple(_sticker(7000 + i, e) for i, e in enumerate(_FACES))
+HEARTS = tuple(_sticker(7100 + i, e) for i, e in enumerate(_HEARTS))
+CATS = tuple(_sticker(7200 + i, e) for i, e in enumerate(_CATS))
+STICKER_PACKS = (
+    StickerPack("recent", "Recent", 4, (FACES[3], HEARTS[0], CATS[1], FACES[0])),
+    StickerPack("faved", "Favourites", 2, (CATS[3], FACES[5])),
+    StickerPack("set:1", "Sunny faces", len(FACES), FACES),
+    StickerPack("set:2", "Hearts and stars", len(HEARTS), HEARTS),
+    StickerPack("set:3", "گربه‌ها Cats", len(CATS), CATS),
+)
+GIFS = tuple(
+    _gif(8000 + i, w, h)
+    for i, (w, h) in enumerate([(320, 180), (300, 300), (480, 270), (240, 320), (400, 225),
+                                (360, 360), (320, 240)])
+)  # fmt: skip
 
 _LOCKED = "This chat does not allow saving files."
 

@@ -10,11 +10,13 @@ from textual import on
 from textual.message import Message as UiMessage
 
 from peyk.backend.base import BackendError, Link, ReactionsChanged
-from peyk.models import Chat, Kind, State
+from peyk.models import Chat, Kind, Media, State
 from peyk.platform import notify
 from peyk.store import is_channel_id
 from peyk.text import format as fmt
 from peyk.ui.screens.reactions import ReactionPicker
+from peyk.ui.screens.stickers import StickerPicker
+from peyk.ui.screens.writing import Draft
 from peyk.ui.widgets.divider import Divider
 
 if TYPE_CHECKING:
@@ -56,6 +58,50 @@ class Extras(_Base):
         self.app.push_screen(
             ReactionPicker(self._backend, self._options, message, self._keys), chosen
         )
+
+    # -- stickers and GIFs ---------------------------------------------------
+
+    def do_stickers(self) -> None:
+        self._choose_file(gifs=False)
+
+    def do_gifs(self) -> None:
+        self._choose_file(gifs=True)
+
+    def _choose_file(self, gifs: bool) -> None:
+        if not self.in_chat and self.chat_list.selected not in (None, self.active):
+            self.open_chat(self.chat_list.selected)
+        chat = self._chat
+        if chat is None:
+            self._flash("Open a chat first.")
+            return
+        if not chat.can_write:
+            self._flash("You cannot write in this chat.")
+            return
+        if self.draft.edit_id:
+            self._flash("Finish editing first.")
+            return
+        self.in_chat = True
+        self._arrange()
+
+        def chosen(media: Media | None) -> None:
+            if media is not None and not self._gone:
+                self._send_file(chat.id, media)
+
+        gallery = self.gallery if self._inline else None
+        picker = StickerPicker(
+            self._backend, gallery, self._options, self._keys, gifs, self._file_memory
+        )
+        self.app.push_screen(picker, chosen)
+
+    def _send_file(self, chat_id: int, media: Media) -> None:
+        """A sticker or GIF goes at once, as a reply if one was being written."""
+        draft = self._drafts.setdefault(chat_id, Draft())
+        reply, draft.reply = draft.reply, None
+        me = self._me.id if self._me else 0
+        self.outbox.add(chat_id, "", (), reply, me, "", ready=media)
+        if chat_id == self.active:
+            self._show_draft()
+            self.do_newest()
 
     async def _react(self, chat_id: int, message_id: int, keys: tuple[str, ...]) -> None:
         try:

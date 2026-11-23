@@ -59,7 +59,8 @@ ChoiceScreen, ReactionPicker {
 }
 
 /* Colours of the terminal cannot be mixed with others. */
-ChoiceScreen:ansi, ReactionPicker:ansi, Finder:ansi, HelpScreen:ansi, FilePicker:ansi, CommandScreen:ansi {
+ChoiceScreen:ansi, ReactionPicker:ansi, Finder:ansi, HelpScreen:ansi, FilePicker:ansi, CommandScreen:ansi,
+StickerPicker:ansi {
     background: transparent;
 }
 
@@ -121,7 +122,7 @@ ChoiceScreen:ansi, ReactionPicker:ansi, Finder:ansi, HelpScreen:ansi, FilePicker
     height: 1;
 }
 
-Finder, HelpScreen, FilePicker {
+Finder, HelpScreen, FilePicker, StickerPicker {
     align: center middle;
     background: $background 60%;
 }
@@ -145,6 +146,16 @@ Finder, HelpScreen, FilePicker {
 
 #help {
     height: 1fr;
+}
+
+#sticker-panes {
+    height: 1fr;
+    margin-top: 1;
+}
+
+#sticker-name {
+    height: 1;
+    margin-top: 1;
 }
 
 /* A blank column on both sides: Windows Terminal shifts a row whose box-drawing

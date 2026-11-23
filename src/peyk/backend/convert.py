@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from telethon import types, utils
+from telethon.tl.custom.file import File
 
 from peyk.files import safe_name
 from peyk.models import FOREVER, Chat, Folder, Kind, Media, Message, Reaction, Reply, Span
@@ -313,7 +314,12 @@ def _file_details(m: Any, raw: Any) -> dict[str, Any]:
     }
     if getattr(m, "noforwards", False) or getattr(m.chat, "noforwards", False):
         details["locked"] = "This chat does not allow saving files."
-    sizes = (thing.sizes if m.photo else thing.thumbs) or ()
+    return details | _picture_details(thing, file, bool(m.photo), details["size"])
+
+
+def _picture_details(thing: Any, file: Any, photo: bool, size: int) -> dict[str, Any]:
+    details: dict[str, Any] = {}
+    sizes = (thing.sizes if photo else thing.thumbs) or ()
     for size in sizes:
         if isinstance(size, types.PhotoStrippedSize):
             details["preview"] = utils.stripped_photo_to_jpg(size.bytes)
@@ -323,13 +329,32 @@ def _file_details(m: Any, raw: Any) -> dict[str, Any]:
         largest = max(real, key=lambda s: s.w * s.h)
         # Thumbnails can be cut square; the file's own proportions are the right ones.
         shape = own if min(own) > 0 else (largest.w, largest.h)
-    elif m.document and file.mime_type in PICTURE_TYPES and details["size"] <= MAX_PICTURE:
+    elif not photo and file.mime_type in PICTURE_TYPES and size <= MAX_PICTURE:
         shape = own
     else:
         return details
     if min(shape) > 0:
         details |= {"picture": True, "width": shape[0], "height": shape[1]}
     return details
+
+
+def document(doc: Any) -> Media | None:
+    """A sticker or GIF of our own collection. None for other kinds of files."""
+    if not isinstance(doc, types.Document):
+        return None
+    file = File(doc)
+    if any(isinstance(a, types.DocumentAttributeSticker) for a in doc.attributes):
+        found = Media("sticker", f"Sticker {sanitize_line(file.emoji or '')}".strip())
+    elif any(isinstance(a, types.DocumentAttributeAnimated) for a in doc.attributes):
+        found = Media("gif", "GIF")
+    else:
+        return None
+    details: dict[str, Any] = {
+        "id": doc.id,
+        "mime": sanitize_line(file.mime_type or ""),
+        "size": file.size or 0,
+    }
+    return replace(found, **details, **_picture_details(doc, file, False, details["size"]))
 
 
 def _labelled(m: Any, raw: Any) -> Media | None:
