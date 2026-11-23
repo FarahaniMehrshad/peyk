@@ -1,20 +1,49 @@
 # Peyk
 
-A vim-style Telegram client for the Windows terminal. Python and Textual, no WSL, no compiler.
+A Telegram client for the Windows terminal, used from the keyboard like vim. No WSL, no compiler.
 
-Work in progress: everything below works; installing it as a command comes next.
+Chats and folders, tabs, replies, edits, formatting, reactions, search, files and pictures (shown in
+the terminal), stickers and GIFs, voice messages, forwarding, pinned messages, notifications, and
+Persian, Arabic and Hebrew text. One account; no secret chats or calls.
 
-## Run
+## Install
 
-Needs [uv](https://docs.astral.sh/uv/), Python 3.13 and Windows Terminal.
+You need Windows 10 or 11 and [Windows Terminal](https://aka.ms/terminal) (1.22 or later shows
+pictures sharply). Python is not needed: uv brings its own.
 
-```powershell
-uv run peyk                # first run asks for your API keys
-uv run peyk --demo         # offline, made-up data
-uv run peyk --demo=login   # offline, from the sign-in screen (code 12345, password demo)
-```
+1. Install [uv](https://docs.astral.sh/uv/), in PowerShell:
 
-API keys: <https://my.telegram.org>, under "API development tools".
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+
+2. Install Peyk, then open a new terminal:
+
+   ```powershell
+   uv tool install git+https://github.com/FarahaniMehrshad/peyk
+   ```
+
+   If `peyk` is then not found, run `uv tool update-shell` and open a new terminal again.
+
+3. Get API keys. Telegram wants every app to have its own: sign in at <https://my.telegram.org>,
+   open "API development tools", and create an app (any name and short name will do). Keep the
+   page open: you need its `api_id` and `api_hash`.
+
+4. Run `peyk`. It asks for the two keys (and a proxy, if you need one), then your phone number,
+   the login code Telegram sends you, and your password if you set one.
+
+The first start after installing takes a few seconds longer. To look around without an account,
+run `peyk --demo`: everything works on made-up chats, and nothing is sent anywhere.
+
+Update with `uv tool upgrade peyk`. Remove it with `uv tool uninstall peyk`; your settings and login
+stay (see [Where things are](#where-things-are)), so log out first (`L`) if you want them gone.
+
+## First steps
+
+`j` and `k` move through the chats, `Enter` opens one, `i` starts writing and `Enter` sends.
+`Esc` stops writing, `h` goes back to the list, `q` quits. In a chat, `j` and `k` select a message
+to reply to (`r`), react to (`+`), open (`o`) and so on. `F1` lists every key, and `:` opens the
+command bar, where typing shows what there is.
 
 ## Keys
 
@@ -185,9 +214,16 @@ FakeTLS MTProxies (secret starting with `ee`) are not supported yet.
 ## Develop
 
 ```powershell
+git clone https://github.com/FarahaniMehrshad/peyk
+cd peyk
+uv run peyk                # the same settings and login as the installed one
+uv run peyk --demo=login   # offline, from the sign-in screen (code 12345, password demo)
 uv run pytest
 uv run ruff check
 ```
+
+Tests never touch your account, settings, clipboard, speakers or microphone, and never open
+anything or show a notification.
 
 ## Credits
 
