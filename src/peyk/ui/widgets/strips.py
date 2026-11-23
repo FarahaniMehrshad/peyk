@@ -34,13 +34,19 @@ def backdrop(widget: Widget) -> Backdrop:
 
 
 class TextOptions:
-    """How to draw right-to-left text; shared by all widgets."""
+    """How to draw right-to-left text, and what typed letters stand for; shared by all widgets."""
 
-    __slots__ = ("lam_alef", "mode")
+    __slots__ = ("lam_alef", "maps", "mode")
 
-    def __init__(self, mode: Mode = "reorder", lam_alef: LamAlef = "stretch") -> None:
+    def __init__(
+        self,
+        mode: Mode = "reorder",
+        lam_alef: LamAlef = "stretch",
+        maps: dict[str, str] | None = None,
+    ) -> None:
         self.mode: Mode = mode
         self.lam_alef: LamAlef = lam_alef
+        self.maps = dict(maps or {})  # letters typed in a row -> the key they press
 
     def fit(self, text: str, width: int) -> tuple[str, int]:
         """(text in visual order, its width), cut to `width` cells."""

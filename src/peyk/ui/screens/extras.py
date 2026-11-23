@@ -1,4 +1,4 @@
-"""The part of the main screen for reactions, typing and notifications."""
+"""The part of the main screen for reactions, typing, notifications and maps."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from textual.message import Message as UiMessage
 
 from peyk import config
 from peyk.backend.base import BackendError, Link, ReactionsChanged
+from peyk.keys import KeyProblem, describe_maps, pretty, resolve_maps
 from peyk.models import Chat, Kind, Media, State, VoiceNote
 from peyk.platform import notify
 from peyk.store import is_channel_id
@@ -237,6 +238,55 @@ class Extras(_Base):
             self._flash(f"Notifications {state} until Peyk ends: config.toml {error}.")
             return
         self._flash(f"Notifications {state}, also next time.")
+
+    # -- maps: letters that press a key, like vim's :inoremap
+
+    def do_map(self, argument: str = "") -> None:
+        """`jj esc` maps, `jj` tells what jj does, nothing lists them all."""
+        maps = self._options.maps
+        parts = argument.split()
+        if not parts:
+            listed = describe_maps(maps)
+            self._flash(f"Maps: {listed}." if listed else "No maps. :map jj esc makes one.")
+            return
+        if len(parts) == 1:
+            typed = parts[0]
+            known = typed in maps
+            self._flash(f"{typed} presses {pretty(maps[typed])}." if known
+                        else f"{typed} is not mapped.")  # fmt: skip
+            return
+        if len(parts) > 2:
+            self._flash("map takes the letters, then a key: :map jj esc")
+            return
+        typed, written = parts
+        try:
+            wanted = resolve_maps({**maps, typed: written})
+        except KeyProblem as problem:
+            self._flash(f"Not mapped: {problem}.")
+            return
+        maps[typed] = wanted[typed]
+        self._keep_map(typed, wanted[typed], f"{typed} presses {pretty(wanted[typed])}")
+
+    def do_unmap(self, argument: str = "") -> None:
+        typed = argument.strip()
+        if not typed:
+            self._flash("unmap takes the letters: :unmap jj")
+        elif typed not in self._options.maps:
+            self._flash(f"{typed} is not mapped.")
+        else:
+            del self._options.maps[typed]
+            self._keep_map(typed, None, f"{typed} are letters again")
+
+    def _keep_map(self, typed: str, key: str | None, done: str) -> None:
+        if self._config_path is None:
+            self._flash(f"{done} until Peyk ends.")
+            return
+        try:
+            config.save_map(self._config_path, typed, key)
+        except config.ConfigError as error:
+            self._flash(f"{done} until Peyk ends: config.toml {error}.")
+            return
+        self._flash(f"{done}, also next time.")
 
     def _notice_clicked_somewhere(self, chat_id: int) -> None:
         """From a thread of Windows."""

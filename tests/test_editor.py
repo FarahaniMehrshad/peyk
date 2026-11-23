@@ -212,3 +212,18 @@ def test_random_keys_never_break_it(seed):
         assert 0 <= e.caret <= len(e.text)
         assert 0 <= e.caret_row < len(e.rows)
         assert 0 <= e.caret_column <= max(e.width, 2)
+
+
+def test_taking_back_what_was_typed():
+    e = editor("hi ")
+    for char in "jj":
+        e.insert(char)
+    assert not e.take_back("x") and not e.take_back("hi jjj")
+    assert e.take_back("j") and (e.text, e.caret) == ("hi j", 4)
+    e.undo()
+    assert e.text == "hi "  # the whole word, as for any typing
+    e = editor()
+    e.insert("j")
+    assert e.take_back("j") and e.text == ""
+    e.undo()
+    assert e.text == ""  # nothing left to undo

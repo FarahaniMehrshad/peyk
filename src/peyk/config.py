@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import textwrap
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from peyk.keys import DEFAULT_KEYS, KeyProblem, resolve
+from peyk.keys import DEFAULT_KEYS, KeyProblem, resolve, resolve_maps
 
 _ACTIONS = textwrap.fill(", ".join(DEFAULT_KEYS), 88, initial_indent="#   ",
                          subsequent_indent="#   ")  # fmt: skip
@@ -69,6 +71,13 @@ typing = true
 #   logout = ""            no key
 # The actions are:
 {_ACTIONS}
+
+[maps]
+# Letters that, typed quickly in a row, press a key instead, like vim's inoremap:
+#   jj = "esc"             stop writing
+#   jk = "enter"           send
+# They work in every text box but the command bar. Typed slowly (a second apart), they stay
+# letters. Inside Peyk, :map jj esc and :unmap jj change them here.
 """
 
 
@@ -90,6 +99,7 @@ class Config:
     show_content: bool = True
     show_typing: bool = True
     keys: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_KEYS))
+    maps: dict[str, str] = field(default_factory=dict)  # typed letters -> key
 
 
 _CHOICES = {
@@ -124,14 +134,14 @@ def parse(text: str) -> Config:
     for section, table in document.items():
         if not isinstance(table, dict):
             raise ConfigError(f"'{section}' must be inside a section such as [text]")
-        if section == "keys":
+        if section in ("keys", "maps"):
             bad = [k for k, v in table.items() if not isinstance(v, str)]
             if bad:
-                raise ConfigError(f"[keys] {bad[0]} must be a string")
+                raise ConfigError(f"[{section}] {bad[0]} must be a string")
             try:
-                values["keys"] = resolve(table)
+                values[section] = (resolve if section == "keys" else resolve_maps)(table)
             except KeyProblem as problem:
-                raise ConfigError(f"[keys] {problem}") from problem
+                raise ConfigError(f"[{section}] {problem}") from problem
             continue
         for key, value in table.items():
             if (section, key) not in _FIELDS:
@@ -153,6 +163,71 @@ _HEADER = re.compile(r"\s*\[([^\]]+)\]\s*(#.*)?")
 def save_setting(path: Path, section: str, key: str, value: bool) -> None:
     """Changes one line of config.toml; everything else stays as it was written."""
     literal = "true" if value else "false"
+    setting = re.compile(rf"(\s*{re.escape(key)}\s*=\s*)(true|false)(\s*(#.*)?)")
+
+    def change(body: str) -> tuple[bool, str | None]:
+        found = setting.fullmatch(body)
+        return (True, found.group(1) + literal + found.group(3)) if found else (False, None)
+
+    field_name = _FIELDS[section, key][0]
+    _rewrite(path, section, key, change, f"{key} = {literal}",
+             lambda read: getattr(read, field_name) == value)  # fmt: skip
+
+
+def save_map(path: Path, typed: str, key: str | None) -> None:
+    """Writes `typed = "key"` under [maps], or removes it when `key` is None."""
+    line = f"{_toml_key(typed)} = \"{key}\""
+
+    def change(body: str) -> tuple[bool, str | None]:
+        found = _setting_in(body)
+        if found is None or found[0] != typed:
+            return False, None
+        if key is None:
+            return True, None
+        indent = body[: len(body) - len(body.lstrip())]
+        return True, indent + line + found[1]
+
+    _rewrite(path, "maps", typed, change, line if key else None,
+             lambda read: read.maps.get(typed) == key)  # fmt: skip
+
+
+def _toml_key(text: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", text):
+        return text
+    return json.dumps(text, ensure_ascii=False)  # also a TOML string
+
+
+def _setting_in(body: str) -> tuple[str, str] | None:
+    """The key of a `key = value` line, and what follows the value (a comment)."""
+    try:
+        whole = tomllib.loads(body)
+    except tomllib.TOMLDecodeError:
+        return None
+    if len(whole) != 1 or isinstance(next(iter(whole.values())), dict):
+        return None
+    key = next(iter(whole))
+    for i, char in enumerate(body):
+        if char != "#":
+            continue
+        try:
+            if tomllib.loads(body[:i]) == whole:
+                value_end = len(body[:i].rstrip())
+                return key, body[value_end:]
+        except tomllib.TOMLDecodeError:
+            pass
+    return key, ""
+
+
+def _rewrite(
+    path: Path,
+    section: str,
+    name: str,
+    change: Callable[[str], tuple[bool, str | None]],
+    addition: str | None,
+    reads_as_meant: Callable[[Config], bool],
+) -> None:
+    """`change(line)`: whether it is the setting, and what it becomes (None: removed).
+    `addition`: the line to add to the section when no line is the setting."""
     try:
         with open(path, encoding="utf-8", newline="") as file:  # line ends as they are
             text = file.read()
@@ -162,7 +237,6 @@ def save_setting(path: Path, section: str, key: str, value: bool) -> None:
         raise ConfigError(f"could not be read: {error}") from error
     newline = "\r\n" if "\r\n" in text else "\n"
     lines = text.splitlines(keepends=True)
-    setting = re.compile(rf"(\s*{re.escape(key)}\s*=\s*)(true|false)(\s*(#.*)?)")
     current, header_at, changed = None, None, False
     for i, line in enumerate(lines):
         body = line.rstrip("\r\n")
@@ -171,20 +245,26 @@ def save_setting(path: Path, section: str, key: str, value: bool) -> None:
             current = found.group(1).strip()
             if current == section and header_at is None:
                 header_at = i
-        elif current == section and (found := setting.fullmatch(body)):
-            lines[i] = found.group(1) + literal + found.group(3) + ending
-            changed = True
-            break
-    if not changed and header_at is not None:
-        lines.insert(header_at + 1, f"{key} = {literal}{newline}")
-    elif not changed:
+        elif current == section:
+            ours, new_body = change(body)
+            if ours:
+                lines[i] = "" if new_body is None else new_body + ending
+                changed = True
+                break
+    if changed or addition is None:
+        pass
+    elif header_at is not None:
+        lines.insert(header_at + 1, f"{addition}{newline}")
+    else:
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += newline
-        lines.append(f"{newline}[{section}]{newline}{key} = {literal}{newline}")
+        lines.append(f"{newline}[{section}]{newline}{addition}{newline}")
     new = "".join(lines)
     # Only what still reads, and reads as meant.
-    if getattr(parse(new), _FIELDS[section, key][0]) != value:
-        raise ConfigError(f"[{section}] {key} could not be changed")
+    if not reads_as_meant(parse(new)):
+        raise ConfigError(f"[{section}] {name} could not be changed")
+    if new == text:
+        return
     part = path.with_name(path.name + ".new")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

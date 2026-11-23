@@ -62,7 +62,7 @@ _NAMED = frozenset({
 _OTHER_NAMES = {
     "esc": "escape", "return": "enter", "del": "delete", "ins": "insert", "pgup": "pageup",
     "pgdn": "pagedown", "pgdown": "pagedown", "page_up": "pageup", "page_down": "pagedown",
-    "plus": "+", "minus": "-", "comma": ",", "space": " ",
+    "plus": "+", "minus": "-", "comma": ",", "space": " ", "cr": "enter", "bs": "backspace",
 }  # fmt: skip
 _MODIFIERS = {"ctrl": "ctrl", "control": "ctrl", "alt": "alt", "shift": "shift"}
 # Terminals send the same thing for these and for another key.
@@ -143,6 +143,54 @@ def _checked(action: str, written: str) -> str:
     if key in _TAKEN:
         raise KeyProblem(f"{action}: {pretty(key)} {_TAKEN[key]}")
     return key
+
+
+# What typed letters can stand for in [maps]: the keys a text box knows.
+TEXT_KEYS = frozenset({
+    "escape", "enter", "ctrl+j", "ctrl+enter", "backspace", "delete", "left", "right", "up",
+    "down", "home", "end", "ctrl+left", "ctrl+right", "ctrl+home", "ctrl+end", "ctrl+w",
+    "ctrl+u", "ctrl+k", "ctrl+z", "ctrl+y",
+})  # fmt: skip
+
+
+MAP_LONGEST = 16
+
+
+def resolve_maps(chosen: Mapping[str, str]) -> dict[str, str]:
+    """Letters typed in a row -> the key they stand for, like vim's inoremap jj <Esc>."""
+    maps: dict[str, str] = {}
+    for typed, written in chosen.items():
+        if not typed or not typed.isprintable():
+            raise KeyProblem(f"'{typed}' cannot be typed")
+        if len(typed) > MAP_LONGEST:
+            raise KeyProblem(f"{typed}: at most {MAP_LONGEST} letters")
+        try:
+            key = normal(_from_vim(written)) if written.strip() else ""
+        except KeyProblem as problem:
+            raise KeyProblem(f"{typed}: {problem}") from None
+        if key not in TEXT_KEYS:
+            raise KeyProblem(f"{typed}: '{written}' is not a key for writing, such as esc or enter")
+        maps[typed] = key
+    for typed in maps:
+        longer = next((t for t in maps if t != typed and t.startswith(typed)), None)
+        if longer:
+            raise KeyProblem(f"{typed} is the start of {longer}; one of them has to go")
+    return maps
+
+
+def _from_vim(written: str) -> str:
+    """<Esc>, <CR>, <C-w> as vim writes them."""
+    written = written.strip()
+    if len(written) > 2 and written[0] == "<" and written[-1] == ">":
+        written = written[1:-1]
+    if written[:2].lower() == "c-" and len(written) > 2:
+        written = "ctrl+" + written[2:]
+    return written
+
+
+def describe_maps(maps: Mapping[str, str]) -> str:
+    """jj Esc, jk Enter"""
+    return ", ".join(f"{typed} {pretty(key)}" for typed, key in maps.items())
 
 
 def pretty(key: str) -> str:

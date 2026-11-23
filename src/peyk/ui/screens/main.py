@@ -94,7 +94,7 @@ class MainScreen(Writing, Finding, MediaActions, Extras, Managing, VoiceMessages
         self._backend = backend
         self._audio: Audio = audio or SoundDevice()  # touches no device until asked
         self._decoded: OrderedDict[tuple[int, int], tuple[np.ndarray, int]] = OrderedDict()
-        self._options = TextOptions(config.rtl, config.lam_alef)  # type: ignore[arg-type]
+        self._options = TextOptions(config.rtl, config.lam_alef, config.maps)  # type: ignore[arg-type]
         self._formatting = config.formatting
         self._keys = config.keys
         self._me: User | None = None

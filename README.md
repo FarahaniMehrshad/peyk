@@ -93,6 +93,23 @@ The actions: `down` `up` `page_down` `page_up` `newest` `focus_list` `focus_chat
 same key, or one is not a key, Peyk says so and does not start. Arrows, PgUp, PgDn, End and `Ctrl+Q`
 always work; digits are for folders and tabs.
 
+Letters typed quickly in a row can press a key instead, like vim's `inoremap jj <Esc>`:
+
+```toml
+[maps]
+jj = "esc"           # stop writing
+jk = "enter"         # send
+```
+
+Or inside Peyk, as in vim: `:map jj <Esc>` (or `:map jj esc`) makes one at once and keeps it in
+`config.toml`, `:unmap jj` forgets it, `:map jj` tells what it does, and `:map` alone lists them all.
+
+They work in every text box but the command bar, and leave no trace of the letters. A second between them and they
+stay letters, so `hajj` typed slowly is safe. They can stand for `esc`, `enter`, `ctrl+j` (new line),
+`backspace`, `delete`, the arrows, `home`, `end`, `ctrl+w`, `ctrl+u`, `ctrl+k`, `ctrl+z` and
+`ctrl+y`. They match what you type, so with a Persian layout write the Persian letters (`"تت" =
+"esc"`).
+
 A chat is marked read only while it is open, the terminal has focus, and the message is on screen.
 
 ## Writing

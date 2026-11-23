@@ -199,6 +199,18 @@ class Editor:
         kind = "type" if len(text) == 1 else "paste"
         self._replace(self.caret, self.caret, text, kind)
 
+    def take_back(self, typed: str) -> bool:
+        """Removes `typed` from before the caret as if it had never been typed."""
+        start = self.caret - len(typed)
+        if start < 0 or self.text[start : self.caret] != typed:
+            return False
+        self.text = self.text[:start] + self.text[self.caret :]
+        self._go(start)
+        if self._undo and self._undo[-1] == (self.text, self.caret):
+            self._undo.pop()  # it was all that step held
+        self._last_edit = ""
+        return True
+
     def backspace(self) -> None:
         if not self.caret:
             return

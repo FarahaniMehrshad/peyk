@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import monotonic
 from unicodedata import category
 
 from rich.style import Style
@@ -11,6 +12,7 @@ from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
 
+from peyk.keys import MAP_LONGEST
 from peyk.text.bidi import VisualLine
 from peyk.text.editor import Editor
 from peyk.text.sanitize import sanitize, sanitize_line
@@ -18,6 +20,8 @@ from peyk.ui.widgets.strips import Row, TextOptions, ink
 
 # Enter sends; Windows Terminal reports Ctrl+Enter as Ctrl+J.
 _NEWLINES = frozenset({"ctrl+j", "ctrl+enter", "shift+enter", "alt+enter", "newline"})
+# Letters further apart than this are just letters, not a mapping (vim's timeoutlen).
+MAP_SECONDS = 1.0
 
 
 class EditBox(Widget, can_focus=True):
@@ -60,8 +64,11 @@ class EditBox(Widget, can_focus=True):
         *,
         placeholder: str = "",
         max_rows: int = 1,
+        maps: bool = True,
     ) -> None:
+        """`maps`: whether the [maps] of config.toml work here."""
         super().__init__(id=id)
+        self._use_maps = maps
         self._options = options
         self.editor = Editor(options.mode, options.lam_alef)
         self.placeholder = placeholder
@@ -69,6 +76,8 @@ class EditBox(Widget, can_focus=True):
         self.header = ""  # a line above the text
         self.frozen = False  # shown but not editable
         self._top = 0
+        self._typed = ""  # the last letters typed in a row, for the maps
+        self._typed_at = 0.0
 
     # -- content
 
@@ -81,6 +90,7 @@ class EditBox(Widget, can_focus=True):
         return self.max_rows > 1
 
     def set(self, text: str) -> None:
+        self._typed = ""
         self.editor.set(text)
         self._show()
 
@@ -206,10 +216,12 @@ class EditBox(Widget, can_focus=True):
 
     def on_paste(self, event: events.Paste) -> None:
         event.stop()
+        self._typed = ""
         self.insert(event.text)
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
+        self._typed = ""
         offset = event.get_content_offset(self)
         if offset:
             row = offset.y - bool(self.header) + self._top
@@ -218,30 +230,30 @@ class EditBox(Widget, can_focus=True):
         self.post_message(self.Clicked(self))
 
     def on_key(self, event: events.Key) -> None:
-        key = event.key
+        typed, self._typed = self._typed, ""
+        if self._act(event.key, event.character, typed):
+            self._taken(event)
+
+    def _act(self, key: str, char: str | None, typed: str = "") -> bool:
+        """True if the key was used here. `typed`: the letters typed just before."""
         if key == "escape":
-            self._taken(event)
             self.post_message(self.Left(self))
-            return
+            return True
         if key == "enter":
-            self._taken(event)
             if not self.frozen:
                 self.post_message(self.Submitted(self))
-            return
+            return True
         if self.frozen:
-            self._taken(event)
-            return
+            return True
         if key in _NEWLINES:
             if self.multiline:
-                self._taken(event)
                 self.editor.insert("\n")
                 self._changed()
-            return
+            return self.multiline
         if self._move(key):
-            self._taken(event)
             self._show()
-        elif self._change(event) or self._type(event):
-            self._taken(event)
+            return True
+        return self._change(key, char) or self._type(key, char, typed)
 
     def _taken(self, event: events.Key) -> None:
         event.stop()
@@ -274,8 +286,7 @@ class EditBox(Widget, can_focus=True):
                 return False
         return True
 
-    def _change(self, event: events.Key) -> bool:
-        key = event.key
+    def _change(self, key: str, char: str | None) -> bool:
         edit = self.editor
         actions = {
             "backspace": edit.backspace,
@@ -289,7 +300,7 @@ class EditBox(Widget, can_focus=True):
             "ctrl+z": edit.undo,
             "ctrl+y": edit.redo,
         }
-        if key == "backspace" and event.character == "\x08":
+        if key == "backspace" and char == "\x08":
             key = "ctrl+backspace"  # plain Backspace is 0x7f
         if key not in actions or (key == "ctrl+k" and not self.multiline):
             return False
@@ -301,13 +312,31 @@ class EditBox(Widget, can_focus=True):
             self._changed()
         return True
 
-    def _type(self, event: events.Key) -> bool:
-        char = event.character
-        if event.key.startswith(("alt+", "ctrl+")):
+    def _type(self, key: str, char: str | None, typed: str) -> bool:
+        if key.startswith(("alt+", "ctrl+")):
             return False
         # Not `isprintable`: that would refuse ZWNJ, which Persian needs.
         if not char or category(char[0]) in ("Cc", "Cs"):
             return False
-        self.editor.insert(sanitize(char))
+        char = sanitize(char)
+        now = monotonic()
+        if now - self._typed_at > MAP_SECONDS:
+            typed = ""
+        typed = (typed + char)[-MAP_LONGEST:]
+        if self._mapped(typed):
+            return True
+        self.editor.insert(char)
         self._changed()
+        self._typed, self._typed_at = typed, now
         return True
+
+    def _mapped(self, typed: str) -> bool:
+        """Presses the key that the letters just typed stand for, taking back those shown."""
+        maps = self._options.maps if self._use_maps else {}
+        for letters, key in maps.items():
+            if typed.endswith(letters) and self.editor.take_back(letters[:-1]):
+                if len(letters) > 1:
+                    self._changed()
+                self._act(key, None)
+                return True
+        return False

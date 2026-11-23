@@ -595,3 +595,55 @@ async def test_notices_go_away(monkeypatch):
         await asyncio.sleep(1.2)
         await d.settle()
         assert notice(d) == ""
+
+
+# -- maps
+
+
+MAPS = Config(maps={"jj": "escape", "kj": "enter", "jw": "ctrl+w"})
+
+
+async def into_focus(d, text):
+    """Typed into whatever has the focus, as a person would."""
+    for char in text:
+        d.app.focused.post_message(events.Key(char, char))
+        await d.settle()
+
+
+async def test_jj_stops_writing_and_leaves_no_trace():
+    async with run(config=MAPS) as d:
+        await d.open(sample.SARA)
+        await d.press("i")
+        await into_focus(d, "hajj")
+        assert box(d).text == "ha" and not box(d).has_focus
+        assert d.screen.query_one(StatusBar).mode != "WRITE"
+        await d.press("i")
+        await into_focus(d, "kkj")
+        assert last(d).text == "hak" and box(d).text == ""
+
+
+async def test_maps_can_stand_for_editing_keys_and_work_in_other_boxes():
+    async with run(config=MAPS) as d:
+        await d.open(sample.SARA)
+        await d.press("i")
+        await into_focus(d, "one twojw")
+        assert box(d).text == "one " and box(d).has_focus
+        await d.press("escape", "/")
+        assert not isinstance(d.app.screen, MainScreen)
+        await into_focus(d, "sajj")
+        assert isinstance(d.app.screen, MainScreen)
+
+
+async def test_letters_typed_slowly_stay_letters(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("peyk.ui.widgets.edit_box.monotonic", lambda: clock[0])
+    async with run(config=MAPS) as d:
+        await d.open(sample.SARA)
+        await d.press("i")
+        await into_focus(d, "j")
+        clock[0] += 1.5
+        await into_focus(d, "j")
+        assert box(d).text == "jj" and box(d).has_focus
+        await d.press("left")  # moving in between breaks the run
+        await into_focus(d, "j")
+        assert box(d).text == "jjj"

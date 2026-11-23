@@ -164,3 +164,28 @@ async def test_unbound_actions_are_still_in_the_command_bar():
         assert "Moving" not in d.text()
         await d.press(":", *"help", "enter")
         assert "Moving" in d.text()
+
+
+# -- maps: letters that press a key, like vim's inoremap jj <Esc>
+
+
+def test_maps_are_read():
+    parsed = config.parse('[maps]\njj = "esc"\njk = "Enter"\n"تت" = "ctrl+w"')
+    assert parsed.maps == {"jj": "escape", "jk": "enter", "تت": "ctrl+w"}
+    assert Config().maps == {}
+
+
+@pytest.mark.parametrize(("table", "words"), [
+    ('jj = "q"', "not a key for writing"),
+    ('jj = "f1"', "not a key for writing"),
+    ('jj = ""', "not a key for writing"),
+    ('jj = "nonsense"', "not a key"),
+    ('jj = 1', "must be a string"),
+    ('j = "esc"\njj = "enter"', "j is the start of jj"),
+    ('"" = "esc"', "cannot be typed"),
+    ('"a\tb" = "esc"', "cannot be typed"),
+    (f'{"j" * 17} = "esc"', "at most 16"),
+])  # fmt: skip
+def test_map_problems_are_explained(table, words):
+    with pytest.raises(ConfigError, match=words):
+        config.parse(f"[maps]\n{table}")

@@ -21,12 +21,13 @@ class Command:
     help: str
     aliases: tuple[str, ...] = ()
     choices: tuple[str, ...] = ()  # of what may follow it
+    free: bool = False  # anything may follow it, as typed
 
 
 def split(typed: str) -> tuple[str, str]:
-    """The command's name and what follows it."""
+    """The command's name and what follows it, as typed."""
     name, _, rest = typed.strip().partition(" ")
-    return name, rest.strip().lower()
+    return name, rest.strip()
 
 
 COMMANDS = (
@@ -45,6 +46,8 @@ COMMANDS = (
     Command("downloads", "downloads", "show the folder with downloads"),
     Command("notifications", "notifications", "on or off, or alone to switch them",
             choices=("on", "off")),  # fmt: skip
+    Command("map", "map", "jj esc: letters that press a key; alone lists them", free=True),
+    Command("unmap", "unmap", "jj: forget what the letters press", free=True),
     Command("close", "close_tab", "close this tab", ("x",)),
     Command("only", "close_others", "close the other tabs"),
     Command("logout", "logout", "log out of Telegram"),
@@ -73,7 +76,8 @@ class CommandScreen(ModalScreen[str | None]):
             yield Static("", id="command-help", markup=False)
             with Horizontal(classes="command-line"):
                 yield Static(":", classes="command-mark", markup=False)
-                yield EditBox(self._options, id="command")
+                # Like vim's command line: :map jj esc must not close it halfway.
+                yield EditBox(self._options, id="command", maps=False)
 
     def on_mount(self) -> None:
         self.query_one("#command").focus()
@@ -101,7 +105,9 @@ class CommandScreen(ModalScreen[str | None]):
         typed = self._box.text.strip()
         command = find(typed)
         argument = split(typed)[1]
-        if command and argument and argument not in command.choices:
+        if command and not command.free:
+            argument = argument.lower()
+        if command and argument and not command.free and argument not in command.choices:
             takes = " or ".join(command.choices) if command.choices else "nothing after it"
             self._suggest(f"{command.name} takes {takes}.")
         elif command:
