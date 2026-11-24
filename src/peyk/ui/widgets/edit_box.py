@@ -15,6 +15,7 @@ from textual.widget import Widget
 from peyk.keys import MAP_LONGEST
 from peyk.text.bidi import VisualLine
 from peyk.text.editor import Editor
+from peyk.text.layout_keys import to_us_key
 from peyk.text.sanitize import sanitize, sanitize_line
 from peyk.ui.widgets.strips import Row, TextOptions, ink
 
@@ -333,8 +334,13 @@ class EditBox(Widget, can_focus=True):
     def _mapped(self, typed: str) -> bool:
         """Presses the key that the letters just typed stand for, taking back those shown."""
         maps = self._options.maps if self._use_maps else {}
+        # jj also works with another layout active: there J types ت, so look at the keys too.
+        keyed = "".join(to_us_key(char) for char in typed)
         for letters, key in maps.items():
-            if typed.endswith(letters) and self.editor.take_back(letters[:-1]):
+            if not (typed.endswith(letters) or keyed.endswith(letters)):
+                continue
+            shown = typed[-len(letters) : -1]  # the letters before this one, as they were typed
+            if self.editor.take_back(shown):
                 if len(letters) > 1:
                     self._changed()
                 self._act(key, None)

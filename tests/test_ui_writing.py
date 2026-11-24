@@ -634,6 +634,19 @@ async def test_maps_can_stand_for_editing_keys_and_work_in_other_boxes():
         assert isinstance(d.app.screen, MainScreen)
 
 
+async def test_maps_work_with_a_persian_layout(monkeypatch):
+    keys = {"ت": "j", "ن": "k"}
+    monkeypatch.setattr("peyk.ui.widgets.edit_box.to_us_key", lambda c: keys.get(c, c))
+    async with run(config=MAPS) as d:
+        await d.open(sample.SARA)
+        await d.press("i")
+        await into_focus(d, "سلامتت")
+        assert box(d).text == "سلام" and not box(d).has_focus
+        await d.press("i")
+        await into_focus(d, "jت")  # a layout switch in between still counts
+        assert box(d).text == "سلام" and not box(d).has_focus
+
+
 async def test_letters_typed_slowly_stay_letters(monkeypatch):
     clock = [100.0]
     monkeypatch.setattr("peyk.ui.widgets.edit_box.monotonic", lambda: clock[0])
