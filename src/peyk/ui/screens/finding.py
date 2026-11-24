@@ -69,6 +69,16 @@ class Finding(_Base):
 
     # -- jumping ------------------------------------------------------------
 
+    def do_replied_to(self) -> None:
+        """Go to the message the selected one answers."""
+        message = self._selected_or_complain("go to what it replies to")
+        if message is None:
+            return
+        if message.reply is None:
+            self._flash("This message is not a reply.")
+            return
+        self.jump(message.chat_id, message.reply.id)
+
     def jump(self, chat_id: int, message_id: int) -> None:
         """Open a chat at one of its messages."""
         history = self.store.history(chat_id)

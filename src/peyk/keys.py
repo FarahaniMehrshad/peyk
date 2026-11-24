@@ -28,6 +28,7 @@ DEFAULT_KEYS: dict[str, str] = {
     "react": "+",
     "forward": "F",
     "pinned": "P",
+    "replied_to": "u",
     "chat_menu": "c",
     "open_media": "o",
     "preview": "p",

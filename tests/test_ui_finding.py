@@ -1,5 +1,7 @@
 """The finders, jumping, commands and help."""
 
+from dataclasses import replace
+
 import pytest
 
 from driver import OFFLINE, run
@@ -7,6 +9,7 @@ from peyk.backend import sample
 from peyk.backend.base import BackendError, ErrorKind, MessagesRemoved
 from peyk.backend.fake import FakeBackend
 from peyk.keys import DEFAULT_KEYS
+from peyk.models import Reply
 from peyk.ui.screens import finder as finder_module
 from peyk.ui.screens.command import COMMANDS, find
 from peyk.ui.screens.finder import ChatFinder, MessageFinder, SenderFinder
@@ -277,6 +280,54 @@ async def test_jump_into_another_chat():
         await d.settle()
         assert d.screen.active == sample.BIG
         assert d.talk.selected_message.text.startswith("Channel-style group message 5")
+
+
+async def select(d, text):
+    """Select the loaded message that starts with `text`, moving up from the newest."""
+    for _ in range(len(d.talk.history.messages)):
+        await d.press("k")
+        if d.talk.selected_message.text.startswith(text):
+            return
+    raise AssertionError(f"no message starts with {text!r}")
+
+
+async def test_go_to_the_message_a_reply_answers():
+    async with run() as d:
+        await d.open(sample.GROUP)
+        await select(d, "Sure")
+        await d.press("u")
+        assert d.talk.selected_message.text == "Can someone share the notes?"
+        await d.press("u")
+        assert "not a reply" in d.text()
+
+
+async def test_go_to_a_replied_message_far_back():
+    async with run() as d:
+        messages = d.backend.messages[sample.LONG]
+        target = next(m for m in messages if m.text.startswith("Message 13."))
+        messages[-1] = replace(messages[-1], reply=Reply(target.id, "Reza", target.text))
+        await d.open(sample.LONG)
+        await d.press("k", "u")
+        await d.settle()
+        assert d.talk.selected_message.id == target.id
+        assert not d.talk.history.at_end
+
+
+async def test_go_to_a_replied_message_that_is_gone():
+    async with run() as d:
+        messages = d.backend.messages[sample.LONG]
+        messages[-1] = replace(messages[-1], reply=Reply(999_999, "Reza", "gone"))
+        await d.open(sample.LONG)
+        await d.press("k", "u")
+        await d.settle()
+        assert "no longer exists" in d.text() and d.talk.history.messages
+
+
+async def test_go_to_a_replied_message_needs_a_selection():
+    async with run() as d:
+        await d.open(sample.GROUP)
+        await d.press("u")
+        assert "Select a message" in d.text()
 
 
 async def test_jump_to_a_message_deleted_meanwhile():

@@ -32,6 +32,7 @@ SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("{copy}", "copy the selected message"),
         ("{react}", "react to the selected message, or take it back"),
         ("{forward}", "forward the selected message"),
+        ("{replied_to}", "go to the message the selected reply answers"),
         ("{pinned}", "go to the pinned message; again for older ones"),
         ("{chat_menu}", "mute, archive, pin or mark the chat"),
         ("{deselect}", "stop writing, then cancel the reply or edit"),

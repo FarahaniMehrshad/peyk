@@ -66,6 +66,7 @@ command bar, where typing shows what there is.
 | `d` `y` | delete (asks first), copy |
 | `+` | react to the selected message, or take it back |
 | `F` | forward the selected message |
+| `u` | go to the message the selected reply answers |
 | `P` | go to the pinned message; again for older ones |
 | `c` | mute, archive, pin or mark the chat |
 | `o` `p` `a` | open the file or link, show the picture, send a file |
@@ -88,7 +89,7 @@ logout = ""          # no key
 
 The actions: `down` `up` `page_down` `page_up` `newest` `focus_list` `focus_chat` `open` `next_tab`
 `previous_tab` `close_tab` `close_others` `fullscreen` `deselect` `write` `reply` `edit` `delete`
-`copy` `react` `forward` `pinned` `chat_menu` `open_media` `preview` `attach` `stickers` `gifs`
+`copy` `react` `forward` `replied_to` `pinned` `chat_menu` `open_media` `preview` `attach` `stickers` `gifs`
 `voice` `find_chat` `find_message` `find_sender` `command` `help` `quit` `logout`. If two have the
 same key, or one is not a key, Peyk says so and does not start. Arrows, PgUp, PgDn, End and `Ctrl+Q`
 always work; digits are for folders and tabs.
