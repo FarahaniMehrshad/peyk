@@ -127,6 +127,7 @@ class MainScreen(Writing, Finding, MediaActions, Extras, Managing, VoiceMessages
         self._file_memory: dict[str, str] = {}  # the sticker pack open last
         self._forward_tokens: dict[tuple[int, int, int, bool], int] = {}
         self._pin_index: dict[int, int] = {}  # the pinned message shown, from the newest
+        self._places: list[tuple[int, int]] = []  # where jumps came from; 0 is the newest
         self._typing_timer: Timer | None = None
         self._alerts: Alerts | None = None
         self._window = 0  # of the terminal

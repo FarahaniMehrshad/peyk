@@ -330,6 +330,44 @@ async def test_go_to_a_replied_message_needs_a_selection():
         assert "Select a message" in d.text()
 
 
+async def test_back_returns_to_the_reply_and_then_the_newest():
+    async with run() as d:
+        await d.open(sample.GROUP)
+        await d.press("u")  # nothing selected: a complaint, and no place remembered
+        await select(d, "Sure")
+        await d.press("u", "ctrl+o")
+        assert d.talk.selected_message.text == "Sure"
+        await d.press("ctrl+o")
+        assert "Nowhere to go back to" in d.text()
+
+
+async def test_back_from_far_back_and_from_another_chat():
+    async with run() as d:
+        messages = d.backend.messages[sample.LONG]
+        target = next(m for m in messages if m.text.startswith("Message 13."))
+        messages[-1] = replace(messages[-1], reply=Reply(target.id, "Reza", target.text))
+        await d.open(sample.GROUP)
+        await d.press("?")
+        await search(d, "Channel-style group message 5")
+        await d.press("tab")  # everywhere
+        await d.settle(0.1)
+        await d.settle()
+        await d.press("enter")
+        await d.settle()
+        assert d.screen.active == sample.BIG
+        await d.open(sample.LONG)
+        await d.press("k", "u")
+        await d.settle()
+        assert d.talk.selected_message.id == target.id
+        await d.press("ctrl+o")
+        await d.settle()
+        assert d.talk.selected_message.id == messages[-1].id
+        await d.press("ctrl+o")  # the search started at the group's newest
+        await d.settle()
+        assert d.screen.active == sample.GROUP and d.talk.selected_message is None
+        assert d.talk.lines_up == 0
+
+
 async def test_jump_to_a_message_deleted_meanwhile():
     async with run() as d:
         await d.open(sample.LONG)

@@ -16,6 +16,7 @@ else:
     from textual.screen import Screen as _Base  # a plain mixin would lose its @on handlers
 
 WINDOW = 60  # messages loaded around one we jump to
+PLACES = 50  # places remembered to go back to
 
 
 class Finding(_Base):
@@ -79,8 +80,40 @@ class Finding(_Base):
             return
         self.jump(message.chat_id, message.reply.id)
 
-    def jump(self, chat_id: int, message_id: int) -> None:
-        """Open a chat at one of its messages."""
+    def do_back(self) -> None:
+        """Back to where the last jump came from, like vim's Ctrl+O."""
+        while self._places:
+            chat_id, message_id = self._places.pop()
+            if chat_id not in self.store.chats:
+                continue
+            if message_id:
+                self.jump(chat_id, message_id, remember=False)
+            elif chat_id == self.active:
+                self.in_chat = True
+                self._arrange()
+                self.do_newest()
+            else:
+                self.open_chat(chat_id)  # a chat is opened at its newest
+            return
+        self._flash("Nowhere to go back to.")
+
+    def _here(self) -> tuple[int, int] | None:
+        chat_id = self.active
+        if chat_id is None or not self.in_chat:
+            return None
+        selected = self.conversation.selected_message
+        if selected:
+            return chat_id, selected.id
+        history = self.store.history(chat_id)
+        if not history.loaded or (history.at_end and self.conversation.lines_up == 0):
+            return chat_id, 0
+        return chat_id, self.conversation.last_visible_id()
+
+    def jump(self, chat_id: int, message_id: int, *, remember: bool = True) -> None:
+        """Open a chat at one of its messages. `remember`: so that back returns here."""
+        here = self._here() if remember else None
+        if here and here != (chat_id, message_id):
+            self._places = [*self._places, here][-PLACES:]
         history = self.store.history(chat_id)
         if history.loaded and history.get(message_id):
             self.open_chat(chat_id)

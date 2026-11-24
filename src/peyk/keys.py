@@ -29,6 +29,7 @@ DEFAULT_KEYS: dict[str, str] = {
     "forward": "F",
     "pinned": "P",
     "replied_to": "u",
+    "back": "ctrl+o",
     "chat_menu": "c",
     "open_media": "o",
     "preview": "p",
